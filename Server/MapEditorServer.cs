@@ -51,6 +51,35 @@ namespace MapEditor.Server
     /// server -> mapeditor:cl:configure (netId, object)   to the owner of a server-created entity
     /// </code>
     ///
+    /// <b>Co-editing has a protocol of its own</b>, on top of the same request/answer plumbing. A session is
+    /// a draft map several players are building at once; it lives in <see cref="Sessions"/>, never touches
+    /// the disk, and ends when the last person leaves. Everything below the first four is fire-and-forget:
+    /// an edit that went missing is put right by the next pass of the sender's own change detector, and an
+    /// answer would only add a round trip to something that happens sixty times a second.
+    ///
+    /// <code>
+    /// client -> mapeditor:sv:cohost (req, name)               open a session on the map I am holding
+    /// client -> mapeditor:sv:colist (req)                     what sessions are open
+    /// client -> mapeditor:sv:cojoin (req, id)                 join, or resynchronise; answer is the document
+    /// client -> mapeditor:sv:copush (req, index, total, chunk) host: this is the map now
+    /// client -> mapeditor:sv:coleave (req)
+    /// client -> mapeditor:sv:cohand (req, slot)               host: you run it now
+    /// client -> mapeditor:sv:cofree (req, slot)               host: let go of what they are holding
+    /// client -> mapeditor:sv:cograb (req, uids)               reserve these while I drag them
+    /// client -> mapeditor:sv:coops  (ops)                     a batch of committed changes
+    /// client -> mapeditor:sv:codrop (uids)                    let go
+    /// client -> mapeditor:sv:codrag (drag)                    where the things I am holding are, right now
+    /// client -> mapeditor:sv:cohere (where)                   where I am, three times a second
+    ///
+    /// server -> mapeditor:cl:coroom (room)                    who is in the session, and who runs it
+    /// server -> mapeditor:cl:coops  (ops)                     somebody else's committed changes
+    /// server -> mapeditor:cl:coheld (slot, uids, held)        somebody took or gave up a reservation
+    /// server -> mapeditor:cl:codrag (slot, drag)              somebody else's drag, in flight
+    /// server -> mapeditor:cl:cohere (slot, where)             somebody else's camera
+    /// server -> mapeditor:cl:coreset ()                       the whole map changed; fetch it again
+    /// server -> mapeditor:cl:cobye  (why)                     you are out of the session
+    /// </code>
+    ///
     /// <b>OneSync is required.</b> Not as a preference: a published map's cars, armed peds and walking peds
     /// are created by the server (see <see cref="LiveEntities"/>) because a local copy of one of those is a
     /// different thing for every player who has it. Without OneSync the server cannot own an entity at all,
@@ -101,6 +130,19 @@ namespace MapEditor.Server
         private readonly Dictionary<string, Upload> _uploads = new Dictionary<string, Upload>();
 
         /// <summary>
+        /// Batches of committed edits, and the reservations that go with them. Generous, because this is the
+        /// shape ordinary work makes: dropping a hundred props out of the stacking tool is one batch, and a
+        /// player dragging something sends one every few frames. Nothing here touches the disk.
+        /// </summary>
+        private readonly RateLimiter _edits = new RateLimiter(60, 30);
+
+        /// <summary>
+        /// Where everybody is and what they are dragging. Refused silently rather than answered: these are
+        /// the two messages it costs nothing to miss, since the next one is a fraction of a second behind.
+        /// </summary>
+        private readonly RateLimiter _presence = new RateLimiter(30, 15);
+
+        /// <summary>
         /// How many startup lines one client may print here before it is ignored. Startup sends about a
         /// dozen; the rest of the allowance is for the ones that carry an error message.
         /// </summary>
@@ -119,6 +161,22 @@ namespace MapEditor.Server
             EventHandlers["mapeditor:sv:unload"] += new Action<Player, int, string>(OnUnload);
             EventHandlers["mapeditor:sv:trace"] += new Action<Player, string>(OnTrace);
             EventHandlers["mapeditor:sv:configured"] += new Action<Player, int>(OnConfigured);
+
+            // Co-editing. See the protocol table in the class remarks.
+            EventHandlers["mapeditor:sv:cohost"] += new Action<Player, int, string>(OnCoHost);
+            EventHandlers["mapeditor:sv:colist"] += new Action<Player, int>(OnCoList);
+            EventHandlers["mapeditor:sv:cojoin"] += new Action<Player, int, int>(OnCoJoin);
+            EventHandlers["mapeditor:sv:copush"] += new Action<Player, int, int, int, string>(OnCoPush);
+            EventHandlers["mapeditor:sv:coleave"] += new Action<Player, int>(OnCoLeave);
+            EventHandlers["mapeditor:sv:coend"] += new Action<Player, int, string>(OnCoEnd);
+            EventHandlers["mapeditor:sv:cohand"] += new Action<Player, int, int>(OnCoHand);
+            EventHandlers["mapeditor:sv:cofree"] += new Action<Player, int, int>(OnCoFree);
+            EventHandlers["mapeditor:sv:cograb"] += new Action<Player, int, string>(OnCoGrab);
+            EventHandlers["mapeditor:sv:coops"] += new Action<Player, string>(OnCoOps);
+            EventHandlers["mapeditor:sv:codrop"] += new Action<Player, string>(OnCoDrop);
+            EventHandlers["mapeditor:sv:codrag"] += new Action<Player, string>(OnCoDrag);
+            EventHandlers["mapeditor:sv:cohere"] += new Action<Player, string>(OnCoHere);
+
             EventHandlers["playerDropped"] += new Action<Player, string>(OnPlayerDropped);
             EventHandlers["onResourceStop"] += new Action<string>(OnResourceStop);
 
@@ -127,10 +185,14 @@ namespace MapEditor.Server
             ServerMaps.EnsureStorage();
 
             LiveEntities.Bind(() => Players, (player, name, args) => TriggerClientEvent(player, name, args));
+            Sessions.Bind((player, name, args) => TriggerClientEvent(player, name, args));
 
-            Log.Info("Server component ready. {0} shared map(s) in storage, {1} of them standing; the editor is {2}.",
+            Log.Info("Server component ready. {0} shared map(s) in storage, {1} of them standing; the editor is {2}. " +
+                     "Co-editing: {3}, up to {4} session(s) of {5} player(s).",
                 ServerMaps.Count, ServerMaps.LiveCount,
-                Access.RestrictUse ? "restricted to " + Access.UsePermission : "open to everyone");
+                Access.RestrictUse ? "restricted to " + Access.UsePermission : "open to everyone",
+                Access.RestrictCollab ? "restricted to " + Access.CollabPermission : "open to everyone",
+                Sessions.MaxSessions, Sessions.MaxMembers);
 
             if (LiveEntities.OneSyncEnabled)
             {
@@ -204,6 +266,7 @@ namespace MapEditor.Server
                 .Set("canSave", Access.CanSave(player))
                 .Set("canPublish", oneSync && Access.CanPublish(player))
                 .Set("canUnload", Access.CanUnload(player))
+                .Set("canCollab", Access.CanCollaborate(player))
                 .Set("maxMapSize", MaxMapSize)
                 .Set("maxObjects", MaxObjects);
 
@@ -577,6 +640,525 @@ namespace MapEditor.Server
             LiveEntities.Configured(netId);
         }
 
+        // --- Co-editing ------------------------------------------------------------------------------
+        //
+        // A session is a draft map with several people in it. Nothing here writes a file, spawns anything or
+        // changes what any other player on the server sees: the objects a session holds exist only in the
+        // editors of the people in it, which is why joining one needs no more permission than opening the
+        // editor does. Saving and publishing a session's map are the ordinary save and publish, done by one
+        // of its members, and go through the handlers above with the permissions they have always had.
+
+        /// <summary>
+        /// Opens a session with this player as its host. It starts empty and the host pushes the map it is
+        /// to be about immediately afterwards (<see cref="OnCoPush"/>) — a map is megabytes and does not fit
+        /// in the answer to a request.
+        /// </summary>
+        private void OnCoHost([FromSource] Player player, int request, string name)
+        {
+            if (!_writes.Allow(player.Handle))
+            {
+                Reply(player, request, false, "Too many requests. Try again in a moment.");
+                return;
+            }
+
+            if (!Access.CanCollaborate(player))
+            {
+                Reply(player, request, false, "You do not have permission to edit maps with other players here.");
+                return;
+            }
+
+            // Already in one: taken as leaving it. Not refused, because the case this actually happens in is
+            // a client that restarted — its editor knows nothing of the session it was in, while this side
+            // still has it in the room and still has its objects reserved to it. A player can only be in one
+            // session, so the request says which one plainly enough.
+            LeaveSession(player, null);
+
+            if (Sessions.Count >= Sessions.MaxSessions)
+            {
+                Reply(player, request, false, "This server is already running its maximum of " +
+                                              Sessions.MaxSessions.ToString(CultureInfo.InvariantCulture) +
+                                              " sessions.");
+                return;
+            }
+
+            var trimmed = string.IsNullOrWhiteSpace(name) ? player.Name + "'s map" : name.Trim();
+            if (trimmed.Length > MapNames.MaxLength) trimmed = trimmed.Substring(0, MapNames.MaxLength);
+
+            var session = Sessions.Open(player, trimmed);
+            var member = Sessions.MemberOf(session, player);
+
+            Log.Info("{0} opened session {1} ('{2}').", player.Name, session.Id, Describe(session.Name));
+
+            SendBlob(player, request, Sessions.DocumentJson(session, member));
+            Reply(player, request, true, "");
+        }
+
+        /// <summary>What is open. Names and headcounts only — no map content travels here.</summary>
+        private void OnCoList([FromSource] Player player, int request)
+        {
+            if (!_reads.Allow(player.Handle))
+            {
+                Reply(player, request, false, "Too many requests. Try again in a moment.");
+                return;
+            }
+
+            SendBlob(player, request, Sessions.ListJson());
+            Reply(player, request, true, "");
+        }
+
+        /// <summary>
+        /// Joins a session, or hands an existing member the document again.
+        ///
+        /// The second is not a special case, it is the resynchronise button: a client that thinks it has
+        /// drifted asks for the whole thing and rebuilds from it, and so does one that was told the map
+        /// underneath it has been replaced. Both are the same request, which is why there is only one.
+        /// </summary>
+        private void OnCoJoin([FromSource] Player player, int request, int id)
+        {
+            if (!_reads.Allow(player.Handle))
+            {
+                Reply(player, request, false, "Too many requests. Try again in a moment.");
+                return;
+            }
+
+            if (!Access.CanCollaborate(player))
+            {
+                Reply(player, request, false, "You do not have permission to edit maps with other players here.");
+                return;
+            }
+
+            var session = Sessions.Get(id);
+            if (session == null)
+            {
+                Reply(player, request, false, "That session has ended.");
+                return;
+            }
+
+            var existing = Sessions.MemberOf(session, player);
+            if (existing == null)
+            {
+                // In another one: taken as leaving it, for the reason given in OnCoHost.
+                LeaveSession(player, null);
+
+                if (session.Members.Count >= Sessions.MaxMembers)
+                {
+                    Reply(player, request, false, "That session already has this server's maximum of " +
+                                                  Sessions.MaxMembers.ToString(CultureInfo.InvariantCulture) +
+                                                  " players in it.");
+                    return;
+                }
+
+                if (Sessions.SlotsExhausted(session))
+                {
+                    // Only reachable after two thousand comings and goings in one session. Said plainly
+                    // rather than by handing out a slot that would make two players' object ids collide.
+                    Reply(player, request, false, "That session has been running too long to take anyone new. " +
+                                                  "Somebody in it should save the map and start another.");
+                    return;
+                }
+            }
+
+            var member = Sessions.Join(session, player);
+
+            SendBlob(player, request, Sessions.DocumentJson(session, member));
+            Reply(player, request, true, "");
+
+            if (existing != null) return;
+
+            Log.Info("{0} joined session {1} ('{2}'); {3} in it now.", player.Name, session.Id,
+                Describe(session.Name), session.Members.Count);
+
+            Sessions.AnnounceRoom(session);
+        }
+
+        /// <summary>
+        /// The host saying what the session's map now is, in <see cref="ChunkSize"/> pieces on one request.
+        ///
+        /// Sent once when the session opens, and again whenever the host replaces the map outright — loading
+        /// another one, or starting a new one. Everyone else is told to fetch it again rather than being sent
+        /// a change per object: two thousand additions in one batch is the one case the delta channel is the
+        /// wrong shape for, and re-fetching is a path that already exists and is already exercised.
+        /// </summary>
+        private void OnCoPush([FromSource] Player player, int request, int index, int total, string chunk)
+        {
+            var key = player.Handle + ":push:" + request.ToString(CultureInfo.InvariantCulture);
+
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+
+            if (index == 0)
+            {
+                DropStaleUploads();
+
+                if (session == null || member == null)
+                {
+                    Reply(player, request, false, "You are not in a session.");
+                    return;
+                }
+
+                if (member.Slot != session.HostSlot)
+                {
+                    Reply(player, request, false, "Only the session's host can replace its map.");
+                    return;
+                }
+
+                if (!_writes.Allow(player.Handle))
+                {
+                    Reply(player, request, false, "Too many requests. Try again in a moment.");
+                    return;
+                }
+
+                if (total < 1 || (long)total * ChunkSize > MaxMapSize + ChunkSize)
+                {
+                    Reply(player, request, false, "That map is larger than this server accepts.");
+                    return;
+                }
+
+                _uploads[key] = new Upload { Total = total, Ticks = Environment.TickCount };
+            }
+
+            Upload upload;
+            if (!_uploads.TryGetValue(key, out upload)) return;
+
+            if (index != upload.Next || total != upload.Total)
+            {
+                _uploads.Remove(key);
+                Reply(player, request, false, "The upload arrived out of order.");
+                return;
+            }
+
+            upload.Next++;
+            upload.Ticks = Environment.TickCount;
+            if (chunk != null) upload.Content.Append(chunk);
+
+            if (upload.Content.Length > MaxMapSize)
+            {
+                _uploads.Remove(key);
+                Reply(player, request, false, "That map is larger than this server accepts.");
+                return;
+            }
+
+            if (upload.Next < upload.Total) return;
+
+            _uploads.Remove(key);
+
+            // Re-checked at the end as well as at the start: an upload spans frames and the host can have
+            // left, or handed the session over, in between.
+            if (session == null || member == null || member.Slot != session.HostSlot)
+            {
+                Reply(player, request, false, "You are no longer the session's host.");
+                return;
+            }
+
+            string error;
+            if (!Sessions.Push(session, upload.Content.ToString(), Sessions.MaxObjects, out error))
+            {
+                Reply(player, request, false, error);
+                return;
+            }
+
+            Reply(player, request, true, "");
+
+            // Not to the host: their editor is already holding exactly what they just sent.
+            Sessions.Broadcast(session, member.Slot, "mapeditor:cl:coreset");
+        }
+
+        private void OnCoLeave([FromSource] Player player, int request)
+        {
+            var left = LeaveSession(player, null);
+            Reply(player, request, left, left ? "" : "You are not in a session.");
+        }
+
+        /// <summary>
+        /// Takes a player out of their session and tells everyone left what changed. <paramref name="why"/>
+        /// is what the leaver is told, or null when they asked to leave and know perfectly well why.
+        /// </summary>
+        private bool LeaveSession(Player player, string why)
+        {
+            bool closed, hostChanged;
+            var session = Sessions.Leave(player, out closed, out hostChanged);
+            if (session == null) return false;
+
+            if (why != null) TriggerClientEvent(player, "mapeditor:cl:cobye", why);
+
+            if (closed)
+            {
+                Log.Info("Session {0} ('{1}') ended; the last player left it.", session.Id, Describe(session.Name));
+                return true;
+            }
+
+            // Whatever they were holding is everyone's again, and the room has one fewer name — and possibly
+            // a different host. One announcement covers all three: the room message carries the whole list.
+            Sessions.AnnounceRoom(session);
+
+            if (hostChanged)
+            {
+                var host = session.Host;
+                Log.Info("Session {0} ('{1}') is now {2}'s.", session.Id, Describe(session.Name),
+                    host == null ? "nobody" : host.Name);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The host closing the session for everybody.
+        ///
+        /// It exists because publishing needs it. A published map goes into every player's world and out of
+        /// its author's editor, and a session whose map has just been published is several people editing a
+        /// second copy of something that is already standing — so the host publishing ends the session, and
+        /// says so before it does. The row that ends one for its own sake is the same request.
+        ///
+        /// Nobody loses anything: every member's editor is still holding the map, and any of them can save
+        /// their copy. Only the shared thread between them is cut.
+        /// </summary>
+        private void OnCoEnd([FromSource] Player player, int request, string why)
+        {
+            Session session;
+            SessionMember member;
+            if (!RequireHost(player, request, out session, out member)) return;
+
+            var reason = string.IsNullOrEmpty(why)
+                ? (player.Name ?? "The host") + " ended the session. The map is still in your editor."
+                : Describe(why, 200);
+
+            Reply(player, request, true, "");
+
+            // Everybody, the host included: their client tears down the same state either way, and the host
+            // asked for it so the message is not news to them.
+            Sessions.Broadcast(session, -1, "mapeditor:cl:cobye", reason);
+            Sessions.Close(session);
+
+            Log.Info("{0} ended session {1} ('{2}').", player.Name, session.Id, Describe(session.Name));
+        }
+
+        /// <summary>The host handing the session to somebody else. It is the only power in a session.</summary>
+        private void OnCoHand([FromSource] Player player, int request, int slot)
+        {
+            Session session;
+            SessionMember member;
+            if (!RequireHost(player, request, out session, out member)) return;
+
+            if (!Sessions.HandOver(session, slot))
+            {
+                Reply(player, request, false, "That player is not in this session any more.");
+                return;
+            }
+
+            Reply(player, request, true, "");
+            Sessions.AnnounceRoom(session);
+
+            var host = session.Host;
+            Log.Info("Session {0} ('{1}') handed to {2}.", session.Id, Describe(session.Name),
+                host == null ? "nobody" : host.Name);
+        }
+
+        /// <summary>
+        /// The host prising loose whatever one member is holding.
+        ///
+        /// A reservation is held until it is given back, with no timer on it, because every timer that could
+        /// be put on one is wrong: a player configuring a prop in the properties menu sends nothing for
+        /// minutes and is not idle. So the case a timer would have covered — somebody who walked away
+        /// holding half the map — is a row on the host's menu instead, which is also the only person who can
+        /// judge it.
+        /// </summary>
+        private void OnCoFree([FromSource] Player player, int request, int slot)
+        {
+            Session session;
+            SessionMember member;
+            if (!RequireHost(player, request, out session, out member)) return;
+
+            var released = Sessions.ReleaseAll(session, slot);
+            Reply(player, request, true, "");
+
+            if (released == null) return;
+
+            AnnounceHolds(session, slot, released, false);
+        }
+
+        private bool RequireHost(Player player, int request, out Session session, out SessionMember member)
+        {
+            session = Sessions.Find(player);
+            member = Sessions.MemberOf(session, player);
+
+            if (session == null || member == null)
+            {
+                Reply(player, request, false, "You are not in a session.");
+                return false;
+            }
+
+            if (member.Slot != session.HostSlot)
+            {
+                Reply(player, request, false, "Only the session's host can do that.");
+                return false;
+            }
+
+            if (!_writes.Allow(player.Handle))
+            {
+                Reply(player, request, false, "Too many requests. Try again in a moment.");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reserving objects for the length of a drag. All of them or none: the caller is about to move a
+        /// group as one rigid thing, and half of it moving is worse than none of it.
+        /// </summary>
+        private void OnCoGrab([FromSource] Player player, int request, string uidsJson)
+        {
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+
+            if (session == null || member == null)
+            {
+                Reply(player, request, false, "You are not in a session.");
+                return;
+            }
+
+            if (!_edits.Allow(player.Handle))
+            {
+                Reply(player, request, false, "Too many requests. Try again in a moment.");
+                return;
+            }
+
+            var uids = ReadUids(uidsJson);
+            if (uids.Count == 0)
+            {
+                Reply(player, request, true, "");
+                return;
+            }
+
+            string heldBy;
+            if (!Sessions.Grab(session, member.Slot, uids, out heldBy))
+            {
+                Reply(player, request, false, Describe(heldBy) + " is holding that.");
+                return;
+            }
+
+            Reply(player, request, true, "");
+            AnnounceHolds(session, member.Slot, uids, true);
+        }
+
+        private void OnCoDrop([FromSource] Player player, string uidsJson)
+        {
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+            if (session == null || member == null) return;
+            if (!_edits.Allow(player.Handle)) return;
+
+            var released = Sessions.Release(session, member.Slot, ReadUids(uidsJson));
+            if (released == null) return;
+
+            AnnounceHolds(session, member.Slot, released, false);
+        }
+
+        private static void AnnounceHolds(Session session, int slot, List<int> uids, bool held)
+        {
+            var array = Json.Array();
+            foreach (var uid in uids) array.Add(Json.Of(uid));
+
+            // Sent to the holder as well: they asked optimistically and started dragging before the answer
+            // came back, so this is the message that confirms it — and the one another client's refusal
+            // arrives on when two people reached for the same crate in the same frame.
+            Sessions.Broadcast(session, -1, "mapeditor:cl:coheld", slot, array.ToJson(), held);
+        }
+
+        private static List<int> ReadUids(string json)
+        {
+            var uids = new List<int>();
+
+            var array = Json.TryParse(json);
+            if (array == null || array.Kind != JsonKind.Array) return uids;
+
+            foreach (var item in array.Items)
+            {
+                var uid = item.AsInt(0);
+                if (uid > 0) uids.Add(uid);
+            }
+
+            return uids;
+        }
+
+        /// <summary>
+        /// A batch of changes somebody has finished making. Applied to the session's document, then passed
+        /// to everyone else exactly as it arrived.
+        ///
+        /// Anything the sender was not allowed to change comes back to them alone, as the change that puts
+        /// it back — see <see cref="Sessions.CorrectionJson"/>. That is the whole of conflict resolution
+        /// here, and it is deliberately quiet: the object the player was moving slides back to where it is,
+        /// and the name of whoever is holding it is already floating above it.
+        /// </summary>
+        private void OnCoOps([FromSource] Player player, string opsJson)
+        {
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+            if (session == null || member == null) return;
+
+            if (!_edits.Allow(player.Handle)) return;
+
+            if (string.IsNullOrEmpty(opsJson) || opsJson.Length > MaxMapSize) return;
+
+            List<int> rejected;
+            bool changed;
+            string error;
+
+            try
+            {
+                if (!Sessions.ApplyOps(session, member, opsJson, Sessions.MaxObjects, out rejected, out changed, out error))
+                {
+                    Log.Info("Dropped a batch from {0} in session {1}: {2}", Describe(player.Name), session.Id, error);
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error("Sessions.ApplyOps", e);
+                return;
+            }
+
+            if (changed) Sessions.Broadcast(session, member.Slot, "mapeditor:cl:coops", opsJson);
+
+            if (rejected != null)
+                Sessions.Send(member, "mapeditor:cl:coops", Sessions.CorrectionJson(session, rejected));
+        }
+
+        /// <summary>
+        /// Where the things one player is dragging are at this instant. Relayed and not stored: the document
+        /// learns about the move when the drag ends, which is the moment the position stops being a guess.
+        /// Somebody who joins mid-drag sees the object where it was picked up and it snaps into place a
+        /// second later, which is the right trade for not writing to the document sixty times a second.
+        /// </summary>
+        private void OnCoDrag([FromSource] Player player, string dragJson)
+        {
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+            if (session == null || member == null) return;
+
+            if (!_presence.Allow(player.Handle)) return;
+            if (string.IsNullOrEmpty(dragJson) || dragJson.Length > ChunkSize) return;
+
+            Sessions.Broadcast(session, member.Slot, "mapeditor:cl:codrag", member.Slot, dragJson);
+        }
+
+        /// <summary>
+        /// Where one player's camera is. The reason it exists: in the editor a player is frozen, invisible
+        /// and eight metres behind a camera nobody else can see, so without this there is no way at all to
+        /// tell where the person you are building with is standing.
+        /// </summary>
+        private void OnCoHere([FromSource] Player player, string whereJson)
+        {
+            var session = Sessions.Find(player);
+            var member = Sessions.MemberOf(session, player);
+            if (session == null || member == null) return;
+
+            if (!_presence.Allow(player.Handle)) return;
+            if (string.IsNullOrEmpty(whereJson) || whereJson.Length > 512) return;
+
+            Sessions.Broadcast(session, member.Slot, "mapeditor:cl:cohere", member.Slot, whereJson);
+        }
+
         /// <summary>
         /// Server entities outlive the script that made them, so a resource restart would otherwise leave a
         /// world full of props with no record anywhere of what they belong to. The map files are untouched:
@@ -593,6 +1175,19 @@ namespace MapEditor.Server
             catch (Exception e)
             {
                 Log.Error("LiveEntities.UnloadAll", e);
+            }
+
+            // A session lives in this script and nowhere else, so it goes down with it. Every participant
+            // still has the map standing in their own editor and can save it; what ends is the thread
+            // between them. Said rather than left to be discovered, because it is the one piece of state
+            // here that a resource restart really does destroy.
+            try
+            {
+                Sessions.CloseAll(cause => TriggerClientEvent("mapeditor:cl:cobye", cause));
+            }
+            catch (Exception e)
+            {
+                Log.Error("Sessions.CloseAll", e);
             }
         }
 
@@ -644,8 +1239,21 @@ namespace MapEditor.Server
 
         private void OnPlayerDropped([FromSource] Player player, string reason)
         {
+            // Before the buckets, so that whatever they were holding in a session is given back to the
+            // people still in it rather than left reserved to somebody who has gone.
+            try
+            {
+                LeaveSession(player, null);
+            }
+            catch (Exception e)
+            {
+                Log.Error("OnPlayerDropped (session)", e);
+            }
+
             _reads.Forget(player.Handle);
             _writes.Forget(player.Handle);
+            _edits.Forget(player.Handle);
+            _presence.Forget(player.Handle);
             _traces.Remove(player.Handle);
 
             var prefix = player.Handle + ":";

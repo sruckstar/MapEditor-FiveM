@@ -250,11 +250,17 @@ namespace MapEditor.Platform
             CanPublish = answer["canPublish"].AsBool(false);
             CanUnload = answer["canUnload"].AsBool(false);
 
+            // Absent on a server half older than co-editing, and false is what that means: it has no
+            // sessions to join, so the rows for them stay shut rather than failing when pressed.
+            Collab.SetAvailable(answer["canCollab"].AsBool(false));
+
             ServerMaxMapSize = answer["maxMapSize"].AsInt(0);
 
-            Log.Info("Server component present. OneSync: {0}. Editor: {1}. Saving: {2}. Publishing: {3}. Unloading: {4}.",
+            Log.Info("Server component present. OneSync: {0}. Editor: {1}. Saving: {2}. Publishing: {3}. " +
+                     "Unloading: {4}. Co-editing: {5}.",
                 ServerHasOneSync ? "on" : "OFF", CanUseEditor ? "allowed" : "denied", CanSave ? "allowed" : "denied",
-                CanPublish ? "allowed" : "denied", CanUnload ? "allowed" : "denied");
+                CanPublish ? "allowed" : "denied", CanUnload ? "allowed" : "denied",
+                Collab.Available ? "allowed" : "denied");
 
             if (!ServerHasOneSync)
                 Log.Info("This server runs without OneSync, so the editor is disabled. The server has to be " +

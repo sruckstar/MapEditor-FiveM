@@ -321,6 +321,43 @@ namespace MapEditor
 			return document == null || document.Kind != JsonKind.Object ? null : ObjectFromJson(document);
 		}
 
+		// The same readers and writers, one piece of a map at a time, for a co-editing session — where a
+		// change travels as the object it is about rather than as a document. Nothing here is a second
+		// implementation of anything: a session's crate is written by the same code that writes a saved
+		// crate and read by the same code that reads one, so the two can never grow apart. See Collab.
+
+		/// <summary>One object of a map, in the form the map file holds it in.</summary>
+		public static Json ObjectJson(MapObject o)
+		{
+			return ObjectToJson(o, false);
+		}
+
+		/// <summary>One object of a map, read back. Null for anything that is not one.</summary>
+		public static MapObject ObjectFrom(Json json)
+		{
+			return json == null || json.Kind != JsonKind.Object ? null : ObjectFromJson(json);
+		}
+
+		public static Json MarkerJson(Marker m)
+		{
+			return MarkerToJson(m);
+		}
+
+		public static Marker MarkerFrom(Json json)
+		{
+			return json == null || json.Kind != JsonKind.Object ? null : MarkerFromJson(json);
+		}
+
+		public static Json MetadataJson(MapMetadata meta)
+		{
+			return MetadataToJson(meta);
+		}
+
+		public static MapMetadata MetadataFrom(Json json)
+		{
+			return json == null || json.Kind != JsonKind.Object ? null : MetadataFromJson(json);
+		}
+
 		private static MapObject ObjectFromJson(Json json)
 		{
 			var o = new MapObject();

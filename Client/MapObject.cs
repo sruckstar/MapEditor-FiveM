@@ -47,6 +47,15 @@ namespace MapEditor
 		public string Id;
 
 		/// <summary>
+		/// What this object is called inside a co-editing session, or 0 outside one.
+		///
+		/// Runtime only, and deliberately not part of any map format: it names one object for as long as
+		/// several people are looking at it together, and means nothing the moment the session ends. A map
+		/// saved out of a session is the same document it would have been alone. See <see cref="Collab"/>.
+		/// </summary>
+		public int Uid;
+
+		/// <summary>
 		/// Whether the server owns this object once the map is published, when the author has said. Null —
 		/// which is what every map written before this existed says, and what the editor leaves it as unless
 		/// the checkbox is touched — means "decide by the rule", see <see cref="Platform.SharedObjects"/>.

@@ -138,7 +138,10 @@ namespace MapEditor
                     {
                         BeginMultiSelectionMove();
                     }
-                    else if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle))
+                    // CanTouch is what stops two people in a session dragging the same crate. Asked here
+                    // rather than after the fact so the refusal costs no round trip and the crate never
+                    // moves at all; see MapEditor.Collab.cs.
+                    else if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle) && CanTouch(hitEnt))
                     {
                         _snappedProp = WrapEntity(hitEnt);
                         _changesMade++;
@@ -147,7 +150,7 @@ namespace MapEditor
                     {
                         var pos = VectorExtensions.RaycastEverything(new Vector2(0f, 0f), _mainCamera.Position, _mainCamera.Rotation, Game.Player.Character);
                         Marker mark = PropStreamer.Markers.FirstOrDefault(m => (m.Position - pos).Length() < 2f);
-                        if (mark != null)
+                        if (mark != null && CanTouch(mark))
                         {
                             _snappedMarker = mark;
                             _changesMade++;
@@ -157,7 +160,10 @@ namespace MapEditor
 
                 if (Game.IsControlJustPressed(0, Control.Attack) && IsMultiSelectKeyDown())
                 {
-                    if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle))
+                    // Refused at the point of adding rather than at the point of moving: a group is moved
+                    // as one, so one object of somebody else's in it would stop the whole group.
+                    if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle) &&
+                        (_multiSelection.Any(e => e != null && e.Handle == hitEnt.Handle) || CanTouch(hitEnt)))
                         ToggleMultiSelection(hitEnt);
                 }
                 else if (Game.IsControlJustPressed(0, Control.Attack))
@@ -165,7 +171,7 @@ namespace MapEditor
                     // A plain click always starts a fresh selection.
                     ClearMultiSelection();
 
-                    if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle))
+                    if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle) && CanTouch(hitEnt))
                     {
                         _selectedProp = WrapEntity(hitEnt);
                         RedrawObjectInfoMenu(_selectedProp, true);
@@ -179,7 +185,7 @@ namespace MapEditor
                     {
                         var pos = VectorExtensions.RaycastEverything(new Vector2(0f, 0f), _mainCamera.Position, _mainCamera.Rotation, Game.Player.Character);
                         Marker mark = PropStreamer.Markers.FirstOrDefault(m => (m.Position - pos).Length() < 2f);
-                        if (mark != null)
+                        if (mark != null && CanTouch(mark))
                         {
                             _selectedMarker = mark;
                             RedrawObjectInfoMenu(_selectedMarker, true);
@@ -236,7 +242,7 @@ namespace MapEditor
                     {
                         DeleteMultiSelection();
                     }
-                    else if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle))
+                    else if (hitEnt != null && PropStreamer.GetAllHandles().Contains(hitEnt.Handle) && CanTouch(hitEnt))
                     {
                         RemoveItemFromEntityMenu(hitEnt);
                         if (PropStreamer.Identifications.ContainsKey(hitEnt.Handle))
@@ -274,7 +280,7 @@ namespace MapEditor
                     {
                         var pos = VectorExtensions.RaycastEverything(new Vector2(0f, 0f), _mainCamera.Position, _mainCamera.Rotation, Game.Player.Character);
                         Marker mark = PropStreamer.Markers.FirstOrDefault(m => (m.Position - pos).Length() < 2f);
-                        if (mark != null)
+                        if (mark != null && CanTouch(mark))
                         {
                             PropStreamer.Markers.Remove(mark);
                             RemoveMarkerFromEntityMenu(mark.Id);

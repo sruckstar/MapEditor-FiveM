@@ -166,6 +166,13 @@ namespace MapEditor
 			ProcessSmartStreaming();
 			WarmObjectRows();
 
+			// After streaming, so that an object put back into the world this frame already has its
+			// session id on it before the pass that reports what changed looks at it. Outside the freecam
+			// as well as inside: somebody who has stepped out of the editor is still in the session and
+			// still has to receive everyone else's work.
+			ProcessCollab();
+			DrawCollabFeed();
+
 			if (PropStreamer.EntityCount > 0 || PropStreamer.RemovedObjects.Count > 0 || PropStreamer.Markers.Count > 0 || PropStreamer.Pickups.Count > 0)
 			{
 				_currentEntitiesItem.Enabled = true;
@@ -188,6 +195,22 @@ namespace MapEditor
 			{
 				_unloadAutoloadedItem.Enabled = false;
 				_unloadAutoloadedItem.AltTitle = "";
+			}
+
+			// The count beside the row is the only place outside the session's own menus that says a map is
+			// not being built alone. Left blank rather than showing "1" when it is: a session of one is a
+			// session waiting for somebody, and the row already says so when opened.
+			if (Collab.Active)
+			{
+				_collabItem.AltTitle = (Collab.Peers.Count + 1).ToString();
+				_collabItem.Description = Translation.Translate("You are building this map with other players.");
+			}
+			else
+			{
+				_collabItem.AltTitle = "";
+				_collabItem.Description = Collab.Available
+					? Translation.Translate("Open this map to the other players, or join a map somebody else is building.")
+					: Translation.Translate("This server does not let players build maps together.");
 			}
 
 			if (ModManager.HasMods)
@@ -345,6 +368,8 @@ namespace MapEditor
 
 			if (_settings.PropCounterDisplay)
 			    DrawEntityCounter();
+
+			DrawCollabWorld();
 
 			Entity hitEnt = VectorExtensions.RaycastEntity(new Vector2(0f, 0f), _mainCamera.Position, _mainCamera.Rotation);
 

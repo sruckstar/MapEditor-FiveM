@@ -35,6 +35,15 @@ namespace MapEditor
         private readonly NativeMenu _filepicker;
 
         /// <summary>
+        /// Building a map with other people: opening a session, joining one, and who is in it. See
+        /// MapEditor.Collab.cs.
+        /// </summary>
+        private readonly NativeMenu _collabMenu = new NativeMenu("Map Editor", "~b~" + Translation.Translate("BUILD WITH OTHERS"));
+        private readonly NativeMenu _collabJoinMenu = new NativeMenu("Map Editor", "~b~" + Translation.Translate("JOIN A SESSION"));
+        private readonly NativeMenu _collabPeopleMenu = new NativeMenu("Map Editor", "~b~" + Translation.Translate("WHO IS HERE"));
+        private readonly NativeMenu _collabPersonMenu = new NativeMenu("Map Editor", "~b~" + Translation.Translate("BUILDER"));
+
+        /// <summary>
         /// The saved maps, to take one away with. A player has no folder to delete a map out of, so without
         /// this row a saved map could never be removed at all.
         /// </summary>
@@ -230,7 +239,16 @@ namespace MapEditor
             _mainMenu.Add(enterExitItem);
 
             var newMapItem = new NativeItem(Translation.Translate("New Map"), Translation.Translate("Remove all current objects and start a new map."));
-            newMapItem.Activated += (sender, args) => NewMap();
+            newMapItem.Activated += (sender, args) =>
+            {
+                // In a session the map is not this player's alone, so emptying it empties everybody's. That
+                // belongs to the host, and the others are told what happened rather than watching a street
+                // disappear. See MapEditor.Collab.cs.
+                if (!MayReplaceTheMap()) return;
+
+                NewMap();
+                AfterMapReplaced();
+            };
             _mainMenu.Add(newMapItem);
 
             var saveMapItem = new NativeItem(Translation.Translate("Save Map"), Translation.Translate("Save all current objects."));
@@ -292,6 +310,10 @@ namespace MapEditor
 	        _currentObjectsMenu.ItemActivated += OnEntityTeleport;
 			_currentObjectsMenu.Buttons.Visible = false;
             _menuPool.Add(_currentObjectsMenu);
+
+            // Placed above the entity list rather than below the map rows: a session is a mode the whole
+            // editor is in, not another thing to do with the map that is open.
+            BuildCollabMenus();
 
             // AddSubMenu's string overload sets the right-hand AltTitle, not the row title:
             // the title always comes from the submenu's Subtitle. Set it explicitly instead.
@@ -461,6 +483,12 @@ namespace MapEditor
         {
             // First, so that whatever the rest runs into the player still has their camera and character back.
             HandBackToPlayer();
+
+            // Best effort, and only that: an event queued while the resource is stopping may never leave.
+            // The server is written not to need it — a request to open or join from a player it still has
+            // in a session is taken as leaving that one — but when it does get out, everyone else stops
+            // seeing a name that has gone and gets back whatever it was holding straight away.
+            Collab.LeaveQuietly();
 
             // These come back from their own entries on the next start, so anything left standing here would
             // be spawned a second time on top of itself.
@@ -1082,6 +1110,10 @@ namespace MapEditor
 		/// </summary>
 		private async Task LoadMap(MapEntry entry)
 		{
+			// The same rule "New Map" follows: in a session the map belongs to everyone in it, and swapping
+			// it is the host's to do.
+			if (!MayReplaceTheMap()) return;
+
 			// A published map already stands in everyone's world, so editing it would build a second copy on
 			// top of the one the player can see. It has to come down for everyone first. Checked here rather
 			// than on the server: asking for a document twice is a mess on one screen, not an attack.
@@ -1110,6 +1142,7 @@ namespace MapEditor
 			}
 
 			await LoadMap(content, format.Value, entry.Name);
+			AfterMapReplaced();
 		}
 
 		/// <summary>
@@ -1252,6 +1285,32 @@ namespace MapEditor
 			{
 				Compat.Notify("~r~~h~Map Editor~h~~w~~n~" + Translation.Translate("A map name cannot contain ':' or '#'."));
 				return;
+			}
+
+			// Publishing hands the map to the server and puts it in everyone's world. A session still
+			// editing it would then be several people working on a second copy of something already
+			// standing — the exact confusion a published map is refused for editing to avoid. So the
+			// session ends first, and everybody keeps the draft in their own editor.
+			if (scope == MapScope.Shared && Collab.Active)
+			{
+				if (!Collab.IsHost)
+				{
+					Compat.Notify("~r~~h~Map Editor~h~~w~~n~" + Translation.Translate(
+						"Only the session's host can publish its map. You can still save a copy to your own maps."));
+					return;
+				}
+
+				var sessionError = await Collab.End(Translation.Translate("The map has been published; the session is over. " +
+				                                                          "Your copy is still in your editor."));
+				ForgetSession();
+
+				if (sessionError != null)
+				{
+					Compat.Notify("~r~~h~Map Editor~h~~w~~n~" + sessionError);
+					return;
+				}
+
+				RefreshCollabMenus();
 			}
 
 			var ser = new MapSerializer();

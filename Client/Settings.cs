@@ -41,6 +41,8 @@ namespace MapEditor
 	        WorldObjectNames = false;
 	        BoundingBox = true;
 	        StreamingRange = SmartStreaming.DefaultRange;
+	        CollabTags = true;
+	        CollabFeed = true;
 	    }
 
 	    public string Translation;
@@ -66,6 +68,17 @@ namespace MapEditor
 	    /// back to it, in metres, or <see cref="SmartStreaming.Off"/> to keep every map in the world whole.
 	    /// </summary>
 	    public int StreamingRange;
+
+	    /// <summary>
+	    /// Whether the other people in a co-editing session are drawn where they are, and whether the objects
+	    /// they are holding are outlined in their colour. On by default: in the editor a player is frozen,
+	    /// invisible and eight metres behind a camera nobody else can see, so without this there is no way at
+	    /// all to tell where the person you are building with is.
+	    /// </summary>
+	    public bool CollabTags;
+
+	    /// <summary>Whether the corner of the screen lists what everyone else in the session has just done.</summary>
+	    public bool CollabFeed;
 
 	    // No NetworkedEntities setting: what the editor spawns is always local, and a published map is
 	    // shared as a document each client spawns for itself. See PropStreamer.Local.
@@ -95,6 +108,8 @@ namespace MapEditor
 	        settings.OmitInvalidObjects = document["OmitInvalidObjects"].AsBool(settings.OmitInvalidObjects);
 	        settings.WorldObjectNames = document["WorldObjectNames"].AsBool(settings.WorldObjectNames);
 	        settings.StreamingRange = document["StreamingRange"].AsInt(settings.StreamingRange);
+	        settings.CollabTags = document["CollabTags"].AsBool(settings.CollabTags);
+	        settings.CollabFeed = document["CollabFeed"].AsBool(settings.CollabFeed);
 
 	        if (document.Has("BoundingBox"))
 	            settings.BoundingBox = document["BoundingBox"].AsBool(true);
@@ -124,6 +139,8 @@ namespace MapEditor
 	            .Set("OmitInvalidObjects", OmitInvalidObjects)
 	            .Set("WorldObjectNames", WorldObjectNames)
 	            .Set("StreamingRange", StreamingRange)
+	            .Set("CollabTags", CollabTags)
+	            .Set("CollabFeed", CollabFeed)
 	            .SetIf(BoundingBox.HasValue, "BoundingBox", Json.Of(BoundingBox ?? true));
 
 	        Kvp.SetString(StorageKey, document.ToJson());

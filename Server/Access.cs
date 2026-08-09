@@ -18,6 +18,9 @@ namespace MapEditor.Server
     ///   never open by default.
     /// * <c>mapeditor.unload</c> — taking a published map back out of the world, for everyone at once. It is
     ///   separate from publishing because it acts on somebody else's map as readily as on one's own.
+    /// * <c>mapeditor.collab</c> — opening or joining a co-editing session. Open by default, like saving: it
+    ///   grants nothing that the editor does not already grant, since a session only ever puts objects into
+    ///   the participants' own editors. An owner who wants building to stay solitary shuts it in one line.
     ///
     /// <b>Why two of them default to allowed rather than to an ACE.</b> A resource starts after server.cfg
     /// has been executed, so an <c>add_ace builtin.everyone mapeditor.use allow</c> issued from here would
@@ -26,10 +29,12 @@ namespace MapEditor.Server
     /// thing in one line without the ordering question:
     ///
     /// <code>
-    /// set mapeditor_restrict_use  true             # the editor now needs the ACE below
-    /// set mapeditor_restrict_save true             # so does keeping maps
+    /// set mapeditor_restrict_use    true           # the editor now needs the ACE below
+    /// set mapeditor_restrict_save   true           # so does keeping maps
+    /// set mapeditor_restrict_collab true           # so does editing a map with someone else
     /// add_ace group.admin mapeditor.use     allow
     /// add_ace group.admin mapeditor.save    allow
+    /// add_ace group.admin mapeditor.collab  allow
     /// add_ace group.admin mapeditor.publish allow  # always needed, restricted or not
     /// add_ace group.admin mapeditor.unload  allow  # likewise
     /// </code>
@@ -46,6 +51,7 @@ namespace MapEditor.Server
         public const string SavePermission = "mapeditor.save";
         public const string PublishPermission = "mapeditor.publish";
         public const string UnloadPermission = "mapeditor.unload";
+        public const string CollabPermission = "mapeditor.collab";
 
         /// <summary>Whether <see cref="UsePermission"/> is enforced at all. See the class remarks.</summary>
         public static bool RestrictUse
@@ -76,6 +82,27 @@ namespace MapEditor.Server
             if (player == null) return false;
             if (!RestrictSave) return true;
             return API.IsPlayerAceAllowed(player.Handle, SavePermission);
+        }
+
+        /// <summary>Whether <see cref="CollabPermission"/> is enforced at all. See the class remarks.</summary>
+        public static bool RestrictCollab
+        {
+            get { return IsTruthy(API.GetConvar("mapeditor_restrict_collab", "false")); }
+        }
+
+        /// <summary>
+        /// Whether this player may open or join a co-editing session.
+        ///
+        /// Open unless the owner has restricted it, because it hands out nothing new: a session puts objects
+        /// into the editors of the people in it and nowhere else, and each of them could have placed those
+        /// objects themselves. What it is worth having a switch for is the sociable half — a server that
+        /// wants builders working alone, or wants sessions kept to a staff group.
+        /// </summary>
+        public static bool CanCollaborate(Player player)
+        {
+            if (player == null) return false;
+            if (!RestrictCollab) return true;
+            return API.IsPlayerAceAllowed(player.Handle, CollabPermission);
         }
 
         public static bool CanPublish(Player player)

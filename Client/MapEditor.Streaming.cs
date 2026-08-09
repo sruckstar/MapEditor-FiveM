@@ -256,6 +256,7 @@ namespace MapEditor
 
                     RegisterIdentification(o, prop.Handle);
                     RegisterShared(o, prop.Handle);
+                    RegisterUid(o, prop.Handle);
                     return prop;
                 }
                 case ObjectTypes.Vehicle:
@@ -278,6 +279,7 @@ namespace MapEditor
 
                     RegisterIdentification(o, vehicle.Handle);
                     RegisterShared(o, vehicle.Handle);
+                    RegisterUid(o, vehicle.Handle);
                     return vehicle;
                 }
                 case ObjectTypes.Ped:
@@ -300,6 +302,7 @@ namespace MapEditor
 
                     RegisterIdentification(o, ped.Handle);
                     RegisterShared(o, ped.Handle);
+                    RegisterUid(o, ped.Handle);
                     return ped;
                 }
             }
@@ -322,6 +325,22 @@ namespace MapEditor
         {
             if (!o.Shared.HasValue) return;
             PropStreamer.SharedOverrides[handle] = o.Shared.Value;
+        }
+
+        /// <summary>
+        /// Carries the name a co-editing session knows this object by onto the entity that has just been
+        /// spawned for it.
+        ///
+        /// Here rather than only where a session's objects are first placed, because <em>this</em> is the
+        /// spawn that streaming uses: an object the player flew away from and came back to is deleted and
+        /// built again, and without this it would come back nameless. The sweep would then mint it a new
+        /// name and announce it as a new object, while the old name — never seen again — would be announced
+        /// as deleted. Everyone else's copy would be rebuilt every time anybody walked past it.
+        /// </summary>
+        private static void RegisterUid(MapObject o, int handle)
+        {
+            if (o.Uid == 0) return;
+            PropStreamer.Uids[handle] = o.Uid;
         }
 
         /// <summary>

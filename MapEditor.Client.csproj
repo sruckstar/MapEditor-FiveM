@@ -142,6 +142,7 @@
     <Compile Include="Client\SessionRestore.cs" />
     <Compile Include="Client\AutoloadedMaps.cs" />
     <Compile Include="Client\SharedEntities.cs" />
+    <Compile Include="Client\Collab.cs" />
     <Compile Include="Client\API\ModManager.cs" />
 
     <!-- The editor itself, one partial class across these files. -->
@@ -155,6 +156,8 @@
     <Compile Include="Client\MapEditor.Info.cs" />
     <Compile Include="Client\MapEditor.WorldObjects.cs" />
     <Compile Include="Client\MapEditor.PedComponents.cs" />
+    <Compile Include="Client\MapEditor.Collab.cs" />
+    <Compile Include="Client\MapEditor.CollabHud.cs" />
   </ItemGroup>
 
 </Project>

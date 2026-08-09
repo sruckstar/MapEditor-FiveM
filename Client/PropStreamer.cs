@@ -102,6 +102,36 @@ namespace MapEditor
 
 		public static List<int> ActiveSirens = new List<int>();
 
+		/// <summary>
+		/// What each entity of the map is called inside a co-editing session, by handle. Empty outside one.
+		///
+		/// It has to live here, beside the other handle-keyed tables, for the reason all of them do: a handle
+		/// is handed back to the game when its entity goes and given out again to whatever spawns next, so
+		/// anything remembered under one has to be forgotten in exactly the same places. An id inherited by
+		/// the wrong entity would put somebody else's edits onto it. See <see cref="Collab"/>.
+		/// </summary>
+		public static Dictionary<int, int> Uids = new Dictionary<int, int>();
+
+		/// <summary>What one entity of the map is called in the session, or 0 if it has no name there yet.</summary>
+		public static int UidOf(int handle)
+		{
+			int uid;
+			return Uids.TryGetValue(handle, out uid) ? uid : 0;
+		}
+
+		/// <summary>The entity carrying one session id, or 0. Walks the table: it is only ever the few
+		/// objects an incoming change names, never the whole map.</summary>
+		public static int HandleOf(int uid)
+		{
+			if (uid == 0) return 0;
+
+			foreach (var pair in Uids)
+			{
+				if (pair.Value == uid) return pair.Key;
+			}
+			return 0;
+		}
+
 	    public static MapMetadata CurrentMapMetadata = new MapMetadata();
 
 		/// <summary>
@@ -571,6 +601,7 @@ namespace MapEditor
 			if (StaticProps.Contains(handle)) StaticProps.Remove(handle);
 			Anchors.Remove(handle);
 			SharedOverrides.Remove(handle);
+			Uids.Remove(handle);
 			Intangible.Remove(handle);
 		}
 
@@ -586,6 +617,7 @@ namespace MapEditor
 			if (StaticProps.Contains(handle)) StaticProps.Remove(handle);
 			Anchors.Remove(handle);
 			SharedOverrides.Remove(handle);
+			Uids.Remove(handle);
 			Intangible.Remove(handle);
         }
 
@@ -641,6 +673,7 @@ namespace MapEditor
 			if (StreamedInHandles.Contains(handle)) StreamedInHandles.Remove(handle);
 			Anchors.Remove(handle);
 			SharedOverrides.Remove(handle);
+			Uids.Remove(handle);
 			Intangible.Remove(handle);
 		}
 
@@ -653,6 +686,7 @@ namespace MapEditor
 			Anchors.Clear();
 			StaticProps.Clear();
 			SharedOverrides.Clear();
+			Uids.Clear();
 			Intangible.Clear();
 			Vehicles.ForEach(v => Compat.Ent(v)?.Delete());
 			Peds.ForEach(v => Compat.Ent(v)?.Delete());
@@ -783,6 +817,7 @@ namespace MapEditor
 			Peds.Remove(handle);
 			Anchors.Remove(handle);
 			SharedOverrides.Remove(handle);
+			Uids.Remove(handle);
 			Intangible.Remove(handle);
 
 			ReleaseModel(entity.Model);
@@ -847,6 +882,7 @@ namespace MapEditor
 				Id = (Identifications.ContainsKey(handle) && !string.IsNullOrWhiteSpace(Identifications[handle])) ? Identifications[handle] : null,
 			};
 
+			snapshot.Uid = UidOf(handle);
 			ApplyAnchor(handle, snapshot);
 			return snapshot;
 		}
@@ -872,6 +908,7 @@ namespace MapEditor
 				Livery = Natives.GetLivery(handle),
 			};
 
+			snapshot.Uid = UidOf(handle);
 			ApplyAnchor(handle, snapshot);
 			return snapshot;
 		}
@@ -898,6 +935,7 @@ namespace MapEditor
 				Textures = PedComponents.ReadTextures(ped),
 			};
 
+			snapshot.Uid = UidOf(handle);
 			ApplyAnchor(handle, snapshot);
 			return snapshot;
 		}

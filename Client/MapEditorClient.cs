@@ -110,6 +110,10 @@ namespace MapEditor
             // request can arrive before the editor exists, and a handler that is not there loses it.
             SharedEntities.Bind(EventHandlers);
 
+            // A co-editing session, for the same reason as the two above: a change made by somebody else
+            // can arrive before this client's editor exists, and there is nothing else to catch it.
+            Collab.Bind(EventHandlers);
+
             EventHandlers["onResourceStop"] += new Action<string>(OnResourceStop);
 
             API.RegisterCommand(ToggleCommand, new Action<int, List<object>, string>(OnToggleCommand), false);
