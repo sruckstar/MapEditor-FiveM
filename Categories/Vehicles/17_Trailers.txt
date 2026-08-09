@@ -1,0 +1,32 @@
+# Trailers
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+armytanker
+armytrailer
+armytrailer2
+baletrailer
+boattrailer
+boattrailer2
+boattrailer3
+docktrailer
+freighttrailer
+graintrailer
+proptrailer
+raketrailer
+tanker
+tanker2
+tr2
+tr3
+tr4
+trailerlarge
+trailerlogs
+trailers
+trailers2
+trailers3
+trailers4
+trailers5
+trailersmall
+trailersmall2
+trflat
+tvtrailer
+tvtrailer2

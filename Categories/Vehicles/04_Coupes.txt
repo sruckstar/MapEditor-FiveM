@@ -1,0 +1,24 @@
+# Coupes
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+cogcabrio
+driftfr36
+driftsentinel2
+eurosX32
+exemplar
+f620
+felon
+felon2
+fr36
+jackal
+kanjosj
+oracle
+oracle2
+postlude
+previon
+sentinel
+sentinel2
+windsor
+windsor2
+zion
+zion2

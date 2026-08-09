@@ -1,0 +1,8 @@
+# Players
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+P_Franklin_02
+P_Michael_02
+Player_One
+Player_Two
+Player_Zero

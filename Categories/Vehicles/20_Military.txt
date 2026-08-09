@@ -1,0 +1,19 @@
+# Military
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+apc
+BARRACKS
+BARRACKS2
+BARRACKS3
+barrage
+chernobog
+CRUSADER
+halftrack
+khanjali
+minitank
+RHINO
+scarab
+scarab2
+scarab3
+thruster
+vetir

@@ -1,0 +1,27 @@
+# Commercial
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+Benson
+benson2
+Biff
+cerberus
+cerberus2
+cerberus3
+Hauler
+Hauler2
+Mule
+Mule2
+Mule3
+mule4
+mule5
+Packer
+Phantom
+phantom2
+phantom3
+Phantom4
+Pounder
+pounder2
+stockade
+stockade3
+stockade4
+terbyte

@@ -1,0 +1,12 @@
+# Cycles
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+BMX
+cruiser
+fixter
+inductor
+inductor2
+scorcher
+tribike
+tribike2
+tribike3

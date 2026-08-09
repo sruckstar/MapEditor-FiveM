@@ -1,0 +1,28 @@
+# Utility
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+Airtug
+caddy
+Caddy2
+caddy3
+docktug
+driftkeitora
+FORKLIFT
+keitora
+Mower
+Ripley
+Sadler
+sadler2
+scrap
+slamtruck
+TOWTRUCK
+Towtruck2
+towtruck3
+towtruck4
+TRACTOR
+tractor2
+tractor3
+utillitruck
+utillitruck2
+Utillitruck3
+trflat2

@@ -1,0 +1,45 @@
+# Vans
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+bison
+Bison2
+Bison3
+bobcatXL
+boxville
+boxville2
+boxville3
+boxville4
+boxville5
+boxville6
+Burrito
+burrito2
+burrito3
+Burrito4
+burrito5
+CAMPER
+gburrito
+gburrito2
+journey
+journey2
+minivan
+minivan2
+paradise
+pony
+pony2
+rumpo
+rumpo2
+rumpo3
+speedo
+speedo2
+speedo4
+speedo5
+SURFER
+Surfer2
+surfer3
+Taco
+youga
+youga2
+youga3
+youga4
+youga5
+laufer

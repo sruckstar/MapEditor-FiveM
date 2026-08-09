@@ -1,0 +1,21 @@
+# Compacts
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+asbo
+blista
+brioso
+brioso2
+brioso3
+club
+dilettante
+dilettante2
+issi2
+issi3
+issi4
+issi5
+issi6
+kanjo
+panto
+prairie
+rhapsody
+weevil

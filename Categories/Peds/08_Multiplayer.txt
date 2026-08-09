@@ -1,0 +1,44 @@
+# Multiplayer
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+MP_F_BennyMech_01
+MP_F_BoatStaff_01
+MP_F_CarDesign_01
+MP_F_CHBar_01
+MP_F_Cocaine_01
+MP_F_Counterfeit_01
+MP_F_DeadHooker
+MP_F_ExecPA_01
+MP_F_ExecPA_02
+MP_F_Forgery_01
+MP_F_Freemode_01
+MP_F_HeliStaff_01
+MP_F_Meth_01
+MP_F_Misty_01
+MP_F_StripperLite
+MP_F_Weed_01
+MP_G_M_Pros_01
+MP_HeadTargets
+MP_M_AvonGoon
+MP_M_BoatStaff_01
+MP_M_BogdanGoon
+MP_M_Claude_01
+MP_M_Cocaine_01
+MP_M_Counterfeit_01
+MP_M_ExArmy_01
+MP_M_ExecPA_01
+MP_M_FamDD_01
+MP_M_FIBSec_01
+MP_M_Forgery_01
+MP_M_Freemode_01
+MP_M_G_VagFun_01
+MP_M_Marston_01
+MP_M_Meth_01
+MP_M_Niko_01
+MP_M_SecuroGuard_01
+MP_M_ShopKeep_01
+MP_M_WareMech_01
+MP_M_WeapExp_01
+MP_M_WeapWork_01
+MP_M_Weed_01
+MP_S_M_Armoured_01

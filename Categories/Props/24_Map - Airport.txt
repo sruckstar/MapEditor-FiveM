@@ -1,0 +1,7 @@
+# Map - Airport
+# One model name per line. Lines starting with # are ignored.
+# Add an object to this category by appending its model name below.
+ap1_lod_emi_a_slod3
+ap1_lod_emi_b_slod3
+ap1_lod_slod4
+hei_ap1_lod_dummyobject

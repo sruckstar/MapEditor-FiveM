@@ -1,0 +1,15 @@
+# Industrial
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+bulldozer
+cutter
+dump
+FLATBED
+flatbed2
+guardian
+handler
+Mixer
+Mixer2
+Rubble
+TipTruck
+TipTruck2

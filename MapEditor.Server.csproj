@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net452</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>MapEditor.Server</RootNamespace>
+    <AssemblyName>MapEditor.Server.net</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>resource\mapeditor\server\</OutputPath>
+    <AssemblyTitle>MapEditor.Server</AssemblyTitle>
+    <Product>MapEditor for FiveM</Product>
+    <Version>2.0.0</Version>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="CitizenFX.Core.Server" Version="1.0.*">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Server\**\*.cs" />
+
+    <!--
+      Compiled into both assemblies rather than shared through a third one.
+
+      A Shared/ project is what §7 of the port plan recommended and what this repository deliberately does
+      not have: the client's files keep the names their single-player originals have, so that a fix landing
+      in the SP branch can be carried over by diffing the file of the same name. A third assembly would also
+      be a third .net.dll for the runtime to load and version.
+
+      Json.cs is the parser this port uses instead of Newtonsoft, and the server needs it to look inside a
+      map before storing it. MapNames.cs and SharedObjects.cs are the two rules both halves have to agree
+      on — what a map may be called, and which of its objects the server owns. None of the three touches
+      CitizenFX, so the client copy compiles here unchanged.
+    -->
+    <Compile Include="Client\Platform\Json.cs" Link="Platform\Json.cs" />
+    <Compile Include="Client\Platform\MapNames.cs" Link="Platform\MapNames.cs" />
+    <Compile Include="Client\Platform\SharedObjects.cs" Link="Platform\SharedObjects.cs" />
+  </ItemGroup>
+
+</Project>

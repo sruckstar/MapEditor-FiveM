@@ -1,0 +1,42 @@
+// Taken from LemonUI 2.2 by Hannele "Lemon" Ruiz, MIT licensed. See Client/Ui/README.md for what was changed and why.
+using System;
+
+namespace MapEditor.Ui
+{
+    /// <summary>
+    /// Represents a container that can hold other UI Elements.
+    /// </summary>
+    /// <typeparam name="T">The type of Element that this container handles.</typeparam>
+    public interface IContainer<T> : IRecalculable, IProcessable
+    {
+        #region Functions
+
+        /// <summary>
+        /// Adds the specified item into the Container.
+        /// </summary>
+        /// <param name="item">The item to add.</param>
+        void Add(T item);
+        /// <summary>
+        /// Removes the item from the container.
+        /// </summary>
+        /// <param name="item">The item to remove.</param>
+        void Remove(T item);
+        /// <summary>
+        /// Removes all of the items that match the function.
+        /// </summary>
+        /// <param name="func">The function to check items.</param>
+        void Remove(Func<T, bool> func);
+        /// <summary>
+        /// Clears all of the items in the container.
+        /// </summary>
+        void Clear();
+        /// <summary>
+        /// Checks if the item is part of the container.
+        /// </summary>
+        /// <param name="item">The item to check.</param>
+        /// <returns><see langword="true"/> if the item is in this container, <see langword="false"/> otherwise.</returns>
+        bool Contains(T item);
+
+        #endregion
+    }
+}

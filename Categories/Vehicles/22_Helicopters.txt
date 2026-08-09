@@ -1,0 +1,34 @@
+# Helicopters
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+akula
+annihilator
+annihilator2
+buzzard
+Buzzard2
+Cargobob
+cargobob2
+Cargobob3
+Cargobob4
+cargobob5
+conada
+conada2
+Frogger
+frogger2
+havok
+hunter
+maverick
+maverick2
+polmav
+savage
+seasparrow
+seasparrow2
+seasparrow3
+skylift
+supervolito
+supervolito2
+swift
+swift2
+valkyrie
+valkyrie2
+volatus

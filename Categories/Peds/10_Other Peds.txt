@@ -1,0 +1,6 @@
+# Other Peds
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+slod_human
+slod_large_quadped
+slod_small_quadped

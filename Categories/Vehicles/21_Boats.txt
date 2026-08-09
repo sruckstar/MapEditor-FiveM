@@ -1,0 +1,29 @@
+# Boats
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+avisa
+Dinghy
+dinghy2
+dinghy3
+dinghy4
+dinghy5
+jetmax
+kosatka
+longfin
+marquis
+patrolboat
+Predator
+seashark
+seashark2
+seashark3
+speeder
+speeder2
+squalo
+submersible
+submersible2
+Suntrap
+toro
+toro2
+tropic
+tropic2
+tug

@@ -1,0 +1,160 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- FiveM's Mono v1 runtime. Mono v2 (.NET 8) uses a different CitizenFX.Core API. -->
+    <TargetFramework>net452</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>MapEditor</RootNamespace>
+    <!-- The ".net" suffix is what makes FiveM load this as a Mono client script. -->
+    <AssemblyName>MapEditor.Client.net</AssemblyName>
+    <!-- net452 has no System.ValueTuple, so tuple syntax is out; 7.3 is the highest safe level. -->
+    <LangVersion>7.3</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>resource\mapeditor\client\</OutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyTitle>MapEditor.Client</AssemblyTitle>
+    <Product>MapEditor for FiveM</Product>
+    <Version>2.0.0</Version>
+    <!-- Only the files listed below compile. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets net452 build without Visual Studio / the targeting pack installed. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+
+    <!-- Provided by the FiveM runtime: reference it, never ship it. -->
+    <PackageReference Include="CitizenFX.Core.Client" Version="1.0.*">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The UI layer: the part of LemonUI 2.2 the editor uses, forked. See Client/Ui/README.md. -->
+    <Compile Include="Client\Ui\SizeF.cs" />
+    <Compile Include="Client\Ui\IDrawable.cs" />
+    <Compile Include="Client\Ui\IProcessable.cs" />
+    <Compile Include="Client\Ui\IRecalculable.cs" />
+    <Compile Include="Client\Ui\IContainer.cs" />
+    <Compile Include="Client\Ui\GFXAlignment.cs" />
+    <Compile Include="Client\Ui\CancelEventArgs.cs" />
+    <Compile Include="Client\Ui\CancelEventHandler.cs" />
+    <Compile Include="Client\Ui\ResolutionChangedEventArgs.cs" />
+    <Compile Include="Client\Ui\ResolutionChangedEventHandler.cs" />
+    <Compile Include="Client\Ui\SafeZoneChangedEventArgs.cs" />
+    <Compile Include="Client\Ui\SafeZoneChangedEventHandler.cs" />
+    <Compile Include="Client\Ui\Controls.cs" />
+    <Compile Include="Client\Ui\Sound.cs" />
+    <Compile Include="Client\Ui\ObjectPool.cs" />
+    <Compile Include="Client\Ui\Tools\Extensions.cs" />
+    <Compile Include="Client\Ui\Tools\GameScreen.cs" />
+    <Compile Include="Client\Ui\Tools\SafeZone.cs" />
+    <Compile Include="Client\Ui\Elements\I2Dimensional.cs" />
+    <Compile Include="Client\Ui\Elements\IText.cs" />
+    <Compile Include="Client\Ui\Elements\BaseElement.cs" />
+    <Compile Include="Client\Ui\Elements\ScaledRectangle.cs" />
+    <Compile Include="Client\Ui\Elements\ScaledText.cs" />
+    <Compile Include="Client\Ui\Elements\ScaledTexture.cs" />
+    <Compile Include="Client\Ui\Scaleform\IScaleform.cs" />
+    <Compile Include="Client\Ui\Scaleform\BaseScaleform.cs" />
+    <Compile Include="Client\Ui\Scaleform\InstructionalButton.cs" />
+    <Compile Include="Client\Ui\Scaleform\InstructionalButtons.cs" />
+    <Compile Include="Client\Ui\Menus\BadgeSet.cs" />
+    <Compile Include="Client\Ui\Menus\ColorSet.cs" />
+    <Compile Include="Client\Ui\Menus\ColorTitleStyle.cs" />
+    <Compile Include="Client\Ui\Menus\CountVisibility.cs" />
+    <Compile Include="Client\Ui\Menus\Direction.cs" />
+    <Compile Include="Client\Ui\Menus\HeaderBehavior.cs" />
+    <Compile Include="Client\Ui\Menus\SubtitleBehavior.cs" />
+    <Compile Include="Client\Ui\Menus\MenuMouseBehavior.cs" />
+    <Compile Include="Client\Ui\Menus\ItemOperation.cs" />
+    <Compile Include="Client\Ui\Menus\ItemActivatedArgs.cs" />
+    <Compile Include="Client\Ui\Menus\ItemActivatedEventHandler.cs" />
+    <Compile Include="Client\Ui\Menus\ItemChangedEventArgs.cs" />
+    <Compile Include="Client\Ui\Menus\ItemChangedEventHandler.cs" />
+    <Compile Include="Client\Ui\Menus\SelectedEventArgs.cs" />
+    <Compile Include="Client\Ui\Menus\SelectedEventHandler.cs" />
+    <Compile Include="Client\Ui\Menus\MenuModifiedEventArgs.cs" />
+    <Compile Include="Client\Ui\Menus\MenuModifiedEventHandler.cs" />
+    <Compile Include="Client\Ui\Menus\NativePanel.cs" />
+    <Compile Include="Client\Ui\Menus\NativeItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeSeparatorItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeCheckboxItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeSlidableItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeListItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeListItemGeneric.cs" />
+    <Compile Include="Client\Ui\Menus\NativeDynamicItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeSubmenuItem.cs" />
+    <Compile Include="Client\Ui\Menus\NativeMenu.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Platform layer: everything the SP build got from SHVDN / the file system. -->
+    <Compile Include="Client\Platform\Frame.cs" />
+    <Compile Include="Client\Platform\Clock.cs" />
+    <Compile Include="Client\Platform\Log.cs" />
+    <Compile Include="Client\Platform\Boot.cs" />
+    <Compile Include="Client\Platform\Json.cs" />
+    <Compile Include="Client\Platform\Xml.cs" />
+    <Compile Include="Client\Platform\Kvp.cs" />
+    <Compile Include="Client\Platform\ResourceFiles.cs" />
+    <Compile Include="Client\Platform\MapStore.cs" />
+    <Compile Include="Client\Platform\MapNames.cs" />
+    <Compile Include="Client\Platform\SharedObjects.cs" />
+    <Compile Include="Client\Platform\Rpc.cs" />
+    <Compile Include="Client\Platform\Notifier.cs" />
+    <Compile Include="Client\Platform\TextInput.cs" />
+    <Compile Include="Client\Platform\Natives.cs" />
+    <Compile Include="Client\Platform\LuaBridge.cs" />
+    <Compile Include="Client\Platform\Colors.cs" />
+
+    <!-- The FiveM entry point: BaseScript, the tick, the command and the key mapping. -->
+    <Compile Include="Client\MapEditorClient.cs" />
+
+    <!-- Ported editor code. -->
+    <Compile Include="Client\Quaternion.cs" />
+    <Compile Include="Client\VectorExtensions.cs" />
+    <Compile Include="Client\Marker.cs" />
+    <Compile Include="Client\Map.cs" />
+    <Compile Include="Client\MapObject.cs" />
+    <Compile Include="Client\CrosshairType.cs" />
+    <Compile Include="Client\Dlc.cs" />
+    <Compile Include="Client\Extensions.cs" />
+    <Compile Include="Client\ObjectDatabase.cs" />
+    <Compile Include="Client\ObjectCategories.cs" />
+    <Compile Include="Client\Favorites.cs" />
+    <Compile Include="Client\Settings.cs" />
+    <Compile Include="Client\PedComponents.cs" />
+    <Compile Include="Client\SmartStreaming.cs" />
+    <Compile Include="Client\PropStreamer.cs" />
+    <Compile Include="Client\ObjectPreview.cs" />
+    <Compile Include="Client\Translation.cs" />
+    <Compile Include="Client\MenyooCompatibility.cs" />
+    <Compile Include="Client\MapSerializer.cs" />
+    <Compile Include="Client\SessionRestore.cs" />
+    <Compile Include="Client\AutoloadedMaps.cs" />
+    <Compile Include="Client\SharedEntities.cs" />
+    <Compile Include="Client\API\ModManager.cs" />
+
+    <!-- The editor itself, one partial class across these files. -->
+    <Compile Include="Client\MapEditor.cs" />
+    <Compile Include="Client\MapEditor.Tick.cs" />
+    <Compile Include="Client\MapEditor.Menus.cs" />
+    <Compile Include="Client\MapEditor.Manipulate.cs" />
+    <Compile Include="Client\MapEditor.Streaming.cs" />
+    <Compile Include="Client\MapEditor.Stacking.cs" />
+    <Compile Include="Client\MapEditor.Looping.cs" />
+    <Compile Include="Client\MapEditor.Info.cs" />
+    <Compile Include="Client\MapEditor.WorldObjects.cs" />
+    <Compile Include="Client\MapEditor.PedComponents.cs" />
+  </ItemGroup>
+
+</Project>

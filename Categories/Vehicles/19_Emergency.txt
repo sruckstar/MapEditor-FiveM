@@ -1,0 +1,38 @@
+# Emergency
+# One model name per line. Lines starting with # are ignored.
+# Add a model to this category by appending its name below.
+AMBULANCE
+FBI
+FBI2
+firetruk
+lguard
+pbus
+polbuffalo
+polbuffalo6
+polcaracara
+polcoquette4
+poldominator10
+poldorado
+polfaction2
+polgauntlet
+polgreenwood
+police
+police2
+police3
+police4
+police5
+policeb
+policeb2
+policeold1
+policeold2
+policet
+policet3
+polimpaler5
+polimpaler6
+polterminus
+pRanger
+RIOT
+riot2
+SHERIFF
+sheriff2
+polignus
