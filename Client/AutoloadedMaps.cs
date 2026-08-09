@@ -93,8 +93,11 @@ namespace MapEditor
 			public string Name { get; }
 
 			public readonly List<LoadedEntity> Entities = new List<LoadedEntity>();
-			public readonly List<int> Pickups = new List<int>();
 			public readonly List<Marker> Markers = new List<Marker>();
+
+			/// <summary>Drawn from the document every frame, like the markers. See <see cref="Laser"/>.</summary>
+			public readonly List<Laser> Lasers = new List<Laser>();
+
 			public readonly List<MapObject> RemovedObjects = new List<MapObject>();
 		}
 
@@ -112,7 +115,7 @@ namespace MapEditor
 		/// Everything the loaded maps are made of, whether or not it happens to be in the world right now: a
 		/// count that fell as the player drove away would be answering a question nobody asked.
 		/// </summary>
-		public static int EntityCount => Maps.Sum(m => m.Entities.Count + m.Pickups.Count);
+		public static int EntityCount => Maps.Sum(m => m.Entities.Count);
 
 		public static bool Any => Maps.Count > 0;
 
@@ -267,8 +270,7 @@ namespace MapEditor
 				// The server's, not ours. Anything whose state stops following from the document once spawned
 				// — a car somebody can get into, a ped that walks or shoots — exists once for the session as
 				// a server entity, and a local copy would stand inside it. See Platform.SharedObjects for the
-				// rule and Server/LiveEntities.cs for the other half. Pickups land here too: they need the
-				// server and the server has no native for them, so nobody places them.
+				// rule and Server/LiveEntities.cs for the other half.
 				if (o.NeedsServer)
 				{
 					toServer++;
@@ -297,6 +299,11 @@ namespace MapEditor
 			foreach (var marker in map.Markers)
 			{
 				if (marker != null) loaded.Markers.Add(marker);
+			}
+
+			foreach (var laser in map.Lasers)
+			{
+				if (laser != null) loaded.Lasers.Add(laser);
 			}
 
 			if (toServer > 0)
@@ -522,6 +529,9 @@ namespace MapEditor
 		/// <summary>Every marker still standing, from whichever maps are still loaded.</summary>
 		private static IEnumerable<Marker> AllMarkers => Maps.SelectMany(m => m.Markers);
 
+		/// <summary>The same for lasers.</summary>
+		private static IEnumerable<Laser> AllLasers => Maps.SelectMany(m => m.Lasers);
+
 		public static void Tick()
 		{
 			// Before the early return: server-owned objects are not in these lists, so a map made entirely
@@ -548,6 +558,15 @@ namespace MapEditor
 					marker.Scale.X, marker.Scale.Y, marker.Scale.Z,
 					marker.Red, marker.Green, marker.Blue, marker.Alpha,
 					marker.BobUpAndDown, marker.RotateToCamera, 2, false, false, false, false);
+			}
+
+			foreach (var laser in AllLasers)
+			{
+				if (laser.OnlyVisibleInEditor && !MapEditor.IsInFreecam) continue;
+
+				// A published map burns whoever walks into it, freecam or not — unlike the map being edited,
+				// where the person standing in the beams is the one aiming them. See PropStreamer.Tick.
+				LaserRenderer.Tick(laser, MapEditor.ViewPosition, true);
 			}
 
 			TickTeleports();
@@ -721,15 +740,12 @@ namespace MapEditor
 					entry.Entity.Delete();
 			}
 
-			foreach (var pickup in map.Pickups)
-				Function.Call(Hash.REMOVE_PICKUP, pickup);
-
 			foreach (var o in map.RemovedObjects)
 				Natives.UnhideModel(o.Position, HideRadius, o.Hash);
 
 			map.Entities.Clear();
-			map.Pickups.Clear();
 			map.Markers.Clear();
+			map.Lasers.Clear();
 			map.RemovedObjects.Clear();
 		}
 	}

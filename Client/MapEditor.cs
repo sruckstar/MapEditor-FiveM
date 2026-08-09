@@ -81,6 +81,16 @@ namespace MapEditor
         private Marker _snappedMarker;
 	    private Marker _selectedMarker;
 
+        private Laser _snappedLaser;
+	    private Laser _selectedLaser;
+
+	    /// <summary>
+	    /// Where the rendering camera is this frame. Read by the maps standing in the world, which draw their
+	    /// lasers from the same eye as the map being edited and cannot reach the freecam themselves. See
+	    /// <see cref="AutoloadedMaps.Tick"/> and <see cref="LaserRenderer"/>.
+	    /// </summary>
+	    public static Vector3 ViewPosition;
+
         private Camera _mainCamera;
         private Camera _objectPreviewCamera;
 
@@ -116,6 +126,7 @@ namespace MapEditor
 	    private bool _firstLoadAnnounced;
 	    private int _mapObjCounter = 0;
 	    private int _markerCounter = 0;
+	    private int _laserCounter = 0;
 
 	    private const Relationship DefaultRelationship = Relationship.Companion;
 
@@ -484,6 +495,10 @@ namespace MapEditor
             // First, so that whatever the rest runs into the player still has their camera and character back.
             HandBackToPlayer();
 
+            // The additive-glow flag the lasers set is the game's, not this resource's: left on, it would
+            // tint every other script's markers and sprites for the rest of the session.
+            LaserRenderer.Shutdown();
+
             // Best effort, and only that: an event queued while the resource is stopping may never leave.
             // The server is written not to need it — a request to open or join from a player it still has
             // in a session is taken as leaving that one — but when it does get out, everyone else stops
@@ -828,6 +843,9 @@ namespace MapEditor
             ClearMultiSelection();
             PropStreamer.RemoveAll();
             PropStreamer.Markers.Clear();
+            PropStreamer.Lasers.Clear();
+            _snappedLaser = null;
+            _selectedLaser = null;
             _currentObjectsMenu.Clear();
             PropStreamer.Identifications.Clear();
             PropStreamer.ActiveScenarios.Clear();
@@ -998,6 +1016,7 @@ namespace MapEditor
                     tmpMap.Objects.AddRange(PropStreamer.GetAllEntities());
                     tmpMap.RemoveFromWorld.AddRange(PropStreamer.RemovedObjects);
                     tmpMap.Markers.AddRange(PropStreamer.Markers);
+                    tmpMap.Lasers.AddRange(PropStreamer.Lasers);
                     tmpMap.Metadata = PropStreamer.CurrentMapMetadata;
                     Compat.Notify("~b~~h~Map Editor~h~~n~~w~" + Translation.Translate("Map sent to external mod for saving."));
                     ModManager.NotifyMapSaved(tmpMap, name);
@@ -1185,16 +1204,6 @@ namespace MapEditor
 				    if(o == null) continue;
 			        _loadedEntities++;
 
-                    if (o.Type == ObjectTypes.Pickup)
-                    {
-                        var newPickup = await PropStreamer.CreatePickup(o.Hash, o.Position, o.Rotation.Z, o.Amount, o.Dynamic, o.Quaternion);
-                        newPickup.Timeout = o.RespawnTimer;
-                        AddItemToEntityMenu(newPickup);
-                        if (o.Id != null && !PropStreamer.Identifications.ContainsKey(newPickup.ObjectHandle))
-                            PropStreamer.Identifications.Add(newPickup.ObjectHandle, o.Id);
-                        continue;
-                    }
-
                     // The far side of a large map is loaded without entering the world: it is in the map, the
                     // entity menu and what gets saved, and streaming spawns it if the player goes there. A
                     // named object is always spawned, in step with IsEntityBusy, which never streams one out:
@@ -1232,6 +1241,15 @@ namespace MapEditor
 			        marker.Id = _markerCounter;
 					PropStreamer.Markers.Add(marker);
 					AddItemToEntityMenu(marker);
+			    }
+
+			    foreach (Laser laser in map2Load.Lasers)
+			    {
+				    if(laser == null) continue;
+			        _laserCounter++;
+			        laser.Id = _laserCounter;
+					PropStreamer.Lasers.Add(laser);
+					AddItemToEntityMenu(laser);
 			    }
 
 		        if (!restoring && map2Load.Metadata != null && map2Load.Metadata.TeleportPoint.HasValue)
@@ -1320,28 +1338,12 @@ namespace MapEditor
 				tmpmap.Objects.AddRange(PropStreamer.GetAllEntities());
 				tmpmap.RemoveFromWorld.AddRange(PropStreamer.RemovedObjects);
 				tmpmap.Markers.AddRange(PropStreamer.Markers);
+				tmpmap.Lasers.AddRange(PropStreamer.Lasers);
 			    tmpmap.Metadata = PropStreamer.CurrentMapMetadata;
 
 				Compat.Notify("~b~~h~Map Editor~h~~w~~n~" + Translation.Translate(scope == MapScope.Shared
 					? "Publishing the map to the server..."
 					: "Sending the map to the server..."));
-
-				// Said before it happens rather than discovered afterwards. A pickup is shared state by
-				// definition — "who took it" has no other answer — and no server-side native creates one, so
-				// a published map places none. A local copy each would look like it works and would not.
-				if (scope == MapScope.Shared)
-				{
-					var pickups = 0;
-					foreach (var o in tmpmap.Objects)
-					{
-						if (o != null && o.Type == ObjectTypes.Pickup) pickups++;
-					}
-
-					if (pickups > 0)
-						Compat.Notify("~o~~h~Map Editor~h~~w~~n~" + pickups + " " + Translation.Translate(
-							"pickup(s) will not be placed: the server cannot create pickups, and a local one " +
-							"would give every player their own."));
-				}
 
 				var error = await MapStore.WriteAsync(scope, name,
 					ser.SerializeToString(tmpmap, MapSerializer.Format.Json));

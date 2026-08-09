@@ -27,7 +27,7 @@ namespace MapEditor
             Entity,
             World,
             Marker,
-            Pickup,
+            Laser,
 
             /// <summary>
             /// An entity of the map that is not in the world at the moment, because the player is nowhere near
@@ -44,7 +44,7 @@ namespace MapEditor
         private class EntityMenuTag
         {
             public EntityMenuKind Kind;
-            public int Id;          // entity handle, marker id or pickup UID
+            public int Id;          // entity handle, marker id or laser id
             public string WorldId;  // MapObject.Id, for props removed from the world
         }
 
@@ -1364,12 +1364,12 @@ namespace MapEditor
             });
         }
 
-        public void AddItemToEntityMenu(DynamicPickup pickup)
+        public void AddItemToEntityMenu(Laser laser)
         {
-            if (pickup == null) return;
-            _currentObjectsMenu.Add(new NativeItem("~h~[PICKUP]~h~ " + pickup.PickupName)
+            if (laser == null) return;
+            _currentObjectsMenu.Add(new NativeItem("~h~[LASER]~h~ " + laser.Pattern)
             {
-                Tag = new EntityMenuTag { Kind = EntityMenuKind.Pickup, Id = pickup.UID },
+                Tag = new EntityMenuTag { Kind = EntityMenuKind.Laser, Id = laser.Id },
             });
         }
 
@@ -1429,15 +1429,7 @@ namespace MapEditor
 
         public void RemoveItemFromEntityMenu(Entity ent)
         {
-            if (PropStreamer.IsPickup(ent.Handle))
-            {
-                var uid = PropStreamer.GetPickup(ent.Handle).UID;
-                RemoveFromEntityMenu(tag => tag.Kind == EntityMenuKind.Pickup && tag.Id == uid);
-            }
-            else
-            {
-                RemoveFromEntityMenu(tag => tag.Kind == EntityMenuKind.Entity && tag.Id == ent.Handle);
-            }
+            RemoveFromEntityMenu(tag => tag.Kind == EntityMenuKind.Entity && tag.Id == ent.Handle);
         }
 
         public void RemoveItemFromEntityMenu(string id)
@@ -1450,6 +1442,11 @@ namespace MapEditor
             RemoveFromEntityMenu(tag => tag.Kind == EntityMenuKind.Marker && tag.Id == id);
         }
 
+        public void RemoveLaserFromEntityMenu(int id)
+        {
+            RemoveFromEntityMenu(tag => tag.Kind == EntityMenuKind.Laser && tag.Id == id);
+        }
+
         public void OnEntityTeleport(object sender, ItemActivatedArgs e)
         {
             if (!IsInFreecam) return;
@@ -1457,18 +1454,16 @@ namespace MapEditor
 
             switch (tag.Kind)
             {
-                case EntityMenuKind.Pickup:
+                case EntityMenuKind.Laser:
                 {
-                    var pickup = PropStreamer.GetPickupByUID(tag.Id);
-                    if (pickup == null) return;
+                    Laser tmpL = PropStreamer.Lasers.FirstOrDefault(l => l.Id == tag.Id);
+                    if (tmpL == null) return;
+                    _mainCamera.Position = tmpL.Position + new Vector3(5f, 5f, 10f);
                     if (_settings.SnapCameraToSelectedObject)
-                    {
-                        _mainCamera.Position = pickup.RealPosition + new Vector3(5f, 5f, 10f);
-                        _mainCamera.PointAt(pickup.RealPosition);
-                    }
+                        _mainCamera.PointAt(tmpL.Position);
                     CloseAllMenus();
-                    _selectedProp = Compat.Ent(pickup.ObjectHandle);
-                    RedrawObjectInfoMenu(_selectedProp, true);
+                    _selectedLaser = tmpL;
+                    RedrawObjectInfoMenu(_selectedLaser, true);
                     SetMenuVisible(_objectInfoMenu, true);
                     return;
                 }

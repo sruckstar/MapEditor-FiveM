@@ -129,9 +129,6 @@ namespace MapEditor.Server
             public string Stamp;
 
             public readonly List<Shared> Objects = new List<Shared>();
-
-            /// <summary>Pickups the map contains and nobody can place. See <see cref="Read"/>.</summary>
-            public int Pickups;
         }
 
         private static readonly List<LiveMap> Maps = new List<LiveMap>();
@@ -270,12 +267,8 @@ namespace MapEditor.Server
 
                 Maps.Add(loaded);
 
-                if (loaded.Objects.Count > 0 || loaded.Pickups > 0)
-                    Log.Info("'{0}': {1} object(s) belong to the server{2}.", entry.Name, loaded.Objects.Count,
-                        loaded.Pickups > 0
-                            ? "; " + loaded.Pickups.ToString(CultureInfo.InvariantCulture) +
-                              " pickup(s) will not be placed, there is no server-side native for them"
-                            : "");
+                if (loaded.Objects.Count > 0)
+                    Log.Info("'{0}': {1} object(s) belong to the server.", entry.Name, loaded.Objects.Count);
             }
         }
 
@@ -310,15 +303,6 @@ namespace MapEditor.Server
                     item["relationship"].AsString(null));
 
                 if (!needsServer) continue;
-
-                // A pickup is the one thing that needs the server and cannot have it: CREATE_PICKUP_ROTATE
-                // has no server-side counterpart. Counted and reported rather than spawned by every client,
-                // which would make "who took it" meaningless.
-                if (string.Equals(type, "Pickup", StringComparison.OrdinalIgnoreCase))
-                {
-                    map.Pickups++;
-                    continue;
-                }
 
                 var position = item["position"];
                 var rotation = item["rotation"];

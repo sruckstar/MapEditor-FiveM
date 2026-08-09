@@ -32,12 +32,17 @@ namespace MapEditor
         /// <summary>What the session has been told about one object, so the next pass can tell what moved.</summary>
         private sealed class CollabKnown
         {
-            /// <summary>The map object as last sent or received. Null for a marker; see <see cref="Marker"/>.</summary>
+            /// <summary>
+            /// The map object as last sent or received. Null for a marker or a laser, which are documents of
+            /// their own; see <see cref="Marker"/> and <see cref="Laser"/>. Exactly one of the three is set.
+            /// </summary>
             public MapObject Object;
 
             public Marker Marker;
 
-            /// <summary>Which of the three tables this belongs to: "" for an object, "m", or "w".</summary>
+            public Laser Laser;
+
+            /// <summary>Which of the four tables this belongs to: "" for an object, "m", "l", or "w".</summary>
             public string Table;
 
             /// <summary>The pass this was last seen in the map. An id not seen in a whole pass has gone.</summary>
@@ -459,7 +464,6 @@ namespace MapEditor
 
                 CollabNotify(Translation.Translate("The session is open. Others can join it from their own editor."));
                 CollabSay(Collab.MySlot, Translation.Translate("Session opened."));
-                WarnAboutPickups();
                 RefreshCollabMenus();
             });
         }
@@ -626,19 +630,6 @@ namespace MapEditor
         }
 
         /// <summary>
-        /// Said once when a session opens on a map that has pickups in it. A pickup is the one thing the
-        /// editor places that is a networked entity in the game's own right, which is why a published map
-        /// leaves them out too — and a session cannot carry what it cannot describe as a document.
-        /// </summary>
-        private void WarnAboutPickups()
-        {
-            if (PropStreamer.Pickups.Count == 0) return;
-
-            CollabNotify(PropStreamer.Pickups.Count + " " + Translation.Translate(
-                "pickup(s) are not part of the session: they are the game's own networked objects and only you can see yours."));
-        }
-
-        /// <summary>
         /// Whether the player may throw away the map that is open and put another one there. Outside a
         /// session, always. Inside one the map belongs to everybody in it, so it is the host's alone —
         /// and a member who tries is told that rather than quietly having their own screen emptied while
@@ -688,6 +679,7 @@ namespace MapEditor
 
             var objects = Json.Array();
             var markers = Json.Array();
+            var lasers = Json.Array();
             var removed = Json.Array();
 
             // Walked list by list rather than through GetAllEntities, because the id has to land where the
@@ -702,7 +694,7 @@ namespace MapEditor
             foreach (var record in PropStreamer.StreamedOut)
             {
                 var o = record.Object;
-                if (o == null || o.Type == ObjectTypes.Pickup) continue;
+                if (o == null) continue;
 
                 if (o.Uid == 0) o.Uid = Collab.NextUid();
                 if (o.Uid == 0) continue;
@@ -720,6 +712,15 @@ namespace MapEditor
                 Remember(marker.Uid, "m", null, CloneMarkerValue(marker));
             }
 
+            foreach (var laser in PropStreamer.Lasers)
+            {
+                if (laser.Uid == 0) laser.Uid = Collab.NextUid();
+                if (laser.Uid == 0) continue;
+
+                lasers.Add(Json.Object().Set("u", laser.Uid).Set("o", MapSerializer.LaserJson(laser)));
+                Remember(laser.Uid, "l", null, null, CloneLaserValue(laser));
+            }
+
             foreach (var o in PropStreamer.RemovedObjects)
             {
                 if (o.Uid == 0) o.Uid = Collab.NextUid();
@@ -732,6 +733,7 @@ namespace MapEditor
             var document = Json.Object()
                 .Set("objects", objects)
                 .Set("markers", markers)
+                .Set("lasers", lasers)
                 .Set("removed", removed)
                 .Set("meta", MapSerializer.MetadataJson(PropStreamer.CurrentMapMetadata));
 
@@ -789,7 +791,7 @@ namespace MapEditor
             {
                 var uid = item["u"].AsInt(0);
                 var o = MapSerializer.ObjectFrom(item["o"]);
-                if (uid == 0 || o == null || o.Type == ObjectTypes.Pickup) continue;
+                if (uid == 0 || o == null) continue;
 
                 o.Uid = uid;
                 _loadedEntities++;
@@ -811,6 +813,21 @@ namespace MapEditor
                 PropStreamer.Markers.Add(marker);
                 AddItemToEntityMenu(marker);
                 Remember(uid, "m", null, CloneMarkerValue(marker));
+            }
+
+            foreach (var item in body["lasers"].Items)
+            {
+                var uid = item["u"].AsInt(0);
+                var laser = MapSerializer.LaserFrom(item["o"]);
+                if (uid == 0 || laser == null) continue;
+
+                laser.Uid = uid;
+                _laserCounter++;
+                laser.Id = _laserCounter;
+
+                PropStreamer.Lasers.Add(laser);
+                AddItemToEntityMenu(laser);
+                Remember(uid, "l", null, null, CloneLaserValue(laser));
             }
 
             foreach (var item in body["removed"].Items)
@@ -961,6 +978,14 @@ namespace MapEditor
 
             if (_selectedMarker != null && _selectedMarker.Uid != 0) wanted.Add(_selectedMarker.Uid);
 
+            if (_snappedLaser != null && _snappedLaser.Uid != 0)
+            {
+                wanted.Add(_snappedLaser.Uid);
+                dragging.Add(_snappedLaser.Uid);
+            }
+
+            if (_selectedLaser != null && _selectedLaser.Uid != 0) wanted.Add(_selectedLaser.Uid);
+
             _collabDragging.Clear();
             foreach (var uid in dragging) _collabDragging.Add(uid);
 
@@ -1080,6 +1105,16 @@ namespace MapEditor
                     continue;
                 }
 
+                if (known.Laser != null)
+                {
+                    var laser = FindLaser(uid);
+                    if (laser == null) continue;
+
+                    laser.Position = known.Laser.Position;
+                    laser.Rotation = known.Laser.Rotation;
+                    continue;
+                }
+
                 if (known.Object == null) continue;
 
                 var handle = PropStreamer.HandleOf(uid);
@@ -1105,6 +1140,12 @@ namespace MapEditor
         {
             if (marker == null || !Collab.Active) return true;
             return CanTouchUid(marker.Uid);
+        }
+
+        private bool CanTouch(Laser laser)
+        {
+            if (laser == null || !Collab.Active) return true;
+            return CanTouchUid(laser.Uid);
         }
 
         private bool CanTouchUid(int uid)
@@ -1163,14 +1204,15 @@ namespace MapEditor
             {
                 return PropStreamer.StreamedInHandles.Count + PropStreamer.Vehicles.Count +
                        PropStreamer.Peds.Count + PropStreamer.StreamedOut.Count +
-                       PropStreamer.Markers.Count + PropStreamer.RemovedObjects.Count;
+                       PropStreamer.Markers.Count + PropStreamer.Lasers.Count +
+                       PropStreamer.RemovedObjects.Count;
             }
         }
 
         /// <summary>
         /// Looks at one object of the map and queues whatever has to be said about it. Position in the
         /// combined index the sweep walks: the three live lists, then what streaming has taken out, then
-        /// the markers, then the game's own objects the map hides.
+        /// the markers, then the lasers, then the game's own objects the map hides.
         /// </summary>
         private void InspectCollabItem(int index)
         {
@@ -1217,6 +1259,14 @@ namespace MapEditor
                 return;
             }
             index -= markers.Count;
+
+            var lasers = PropStreamer.Lasers;
+            if (index < lasers.Count)
+            {
+                InspectLaser(lasers[index]);
+                return;
+            }
+            index -= lasers.Count;
 
             var removed = PropStreamer.RemovedObjects;
             if (index >= removed.Count) return;
@@ -1299,6 +1349,36 @@ namespace MapEditor
         }
 
         /// <summary>
+        /// One laser of the map, compared with what the session was last told about it. The same shape as
+        /// <see cref="InspectMarker"/>, and for the same reason: a laser is a document rather than an entity,
+        /// so there is no handle to look it up by and no snapshot to take — the thing in the list is the
+        /// thing that gets sent.
+        /// </summary>
+        private void InspectLaser(Laser laser)
+        {
+            if (laser.Uid == 0) laser.Uid = Collab.NextUid();
+            if (laser.Uid == 0) return;
+
+            Seen(laser.Uid);
+
+            if (_collabDragging.Contains(laser.Uid)) return;
+
+            CollabKnown known;
+            if (_collabKnown.TryGetValue(laser.Uid, out known) && known.Laser != null)
+            {
+                if (SameLaser(known.Laser, laser)) return;
+                if (Collab.HeldByOther(laser.Uid)) return;
+
+                known.Laser = CloneLaserValue(laser);
+                Queue("l=", laser.Uid, MapSerializer.LaserJson(laser));
+                return;
+            }
+
+            Remember(laser.Uid, "l", null, null, CloneLaserValue(laser));
+            Queue("l+", laser.Uid, MapSerializer.LaserJson(laser));
+        }
+
+        /// <summary>
         /// Says goodbye to every id the pass just finished never came across. An id in the record and
         /// nowhere in the map is an object the player deleted — which is the only way one leaves.
         /// </summary>
@@ -1333,12 +1413,13 @@ namespace MapEditor
             if (_collabKnown.TryGetValue(uid, out known)) known.Generation = _collabGeneration;
         }
 
-        private void Remember(int uid, string table, MapObject o, Marker marker)
+        private void Remember(int uid, string table, MapObject o, Marker marker, Laser laser = null)
         {
             _collabKnown[uid] = new CollabKnown
             {
                 Object = o,
                 Marker = marker,
+                Laser = laser,
                 Table = table,
                 Generation = _collabGeneration,
             };
@@ -1394,10 +1475,19 @@ namespace MapEditor
                 }
 
                 if (_snappedMarker != null && _snappedMarker.Uid == uid)
+                {
                     items.Add(Json.Object()
                         .Set("u", uid)
                         .Set("p", VectorJson(_snappedMarker.Position))
                         .Set("r", VectorJson(_snappedMarker.Rotation)));
+                    continue;
+                }
+
+                if (_snappedLaser != null && _snappedLaser.Uid == uid)
+                    items.Add(Json.Object()
+                        .Set("u", uid)
+                        .Set("p", VectorJson(_snappedLaser.Position))
+                        .Set("r", VectorJson(_snappedLaser.Rotation)));
             }
 
             if (items.Count == 0) return;
@@ -1442,6 +1532,14 @@ namespace MapEditor
                     {
                         marker.Position = position;
                         marker.Rotation = rotation;
+                        continue;
+                    }
+
+                    var laser = FindLaser(uid);
+                    if (laser != null)
+                    {
+                        laser.Position = position;
+                        laser.Rotation = rotation;
                         continue;
                     }
 
@@ -1537,6 +1635,21 @@ namespace MapEditor
                         break;
                     }
                     case "m-":
+                        if (ApplyRemoval(uid)) gone++;
+                        break;
+
+                    case "l+":
+                    case "l=":
+                    {
+                        var laser = MapSerializer.LaserFrom(op["o"]);
+                        if (laser == null) continue;
+                        laser.Uid = uid;
+
+                        if (ApplyLaser(uid, laser)) added++;
+                        else changed++;
+                        break;
+                    }
+                    case "l-":
                         if (ApplyRemoval(uid)) gone++;
                         break;
 
@@ -1677,6 +1790,57 @@ namespace MapEditor
             return true;
         }
 
+        private bool ApplyLaser(int uid, Laser laser)
+        {
+            var existing = FindLaser(uid);
+
+            if (existing != null)
+            {
+                // Written into the laser that is already there rather than swapped for the new one, for the
+                // reason ApplyMarker gives: the editor holds these by reference — the snapped one, the
+                // selected one, the row in the entity menu — and replacing the instance would leave all of
+                // those pointing at a laser that is no longer in the map.
+                existing.Pattern = laser.Pattern;
+                existing.Position = laser.Position;
+                existing.Rotation = laser.Rotation;
+                existing.BeamLength = laser.BeamLength;
+                existing.Width = laser.Width;
+                existing.Height = laser.Height;
+                existing.BeamCount = laser.BeamCount;
+                existing.Density = laser.Density;
+                existing.Thickness = laser.Thickness;
+                existing.Red = laser.Red;
+                existing.Green = laser.Green;
+                existing.Blue = laser.Blue;
+                existing.Alpha = laser.Alpha;
+                existing.Textured = laser.Textured;
+                existing.Rhythm = laser.Rhythm;
+                existing.OnSeconds = laser.OnSeconds;
+                existing.OffSeconds = laser.OffSeconds;
+                existing.ChasePeriod = laser.ChasePeriod;
+                existing.ChaseOnFraction = laser.ChaseOnFraction;
+                existing.Amplitude = laser.Amplitude;
+                existing.Frequency = laser.Frequency;
+                existing.Speed = laser.Speed;
+                existing.DealsDamage = laser.DealsDamage;
+                existing.DamagePerSecond = laser.DamagePerSecond;
+                existing.ActivationRange = laser.ActivationRange;
+                existing.HitRadius = laser.HitRadius;
+                existing.OnlyVisibleInEditor = laser.OnlyVisibleInEditor;
+
+                Remember(uid, "l", null, null, CloneLaserValue(existing));
+                return false;
+            }
+
+            _laserCounter++;
+            laser.Id = _laserCounter;
+
+            PropStreamer.Lasers.Add(laser);
+            AddItemToEntityMenu(laser);
+            Remember(uid, "l", null, null, CloneLaserValue(laser));
+            return true;
+        }
+
         private bool ApplyWorldRemoval(int uid, MapObject o)
         {
             var existing = FindWorldRemoval(uid);
@@ -1705,7 +1869,7 @@ namespace MapEditor
 
         /// <summary>
         /// Takes whatever carries this id out of the map, wherever it is: standing in the world, waiting out
-        /// of range, a marker, or one of the game's objects the map was hiding.
+        /// of range, a marker, a laser, or one of the game's objects the map was hiding.
         /// </summary>
         private bool RemoveByUid(int uid)
         {
@@ -1738,6 +1902,21 @@ namespace MapEditor
 
                 PropStreamer.Markers.Remove(marker);
                 RemoveMarkerFromEntityMenu(marker.Id);
+                return true;
+            }
+
+            var laser = FindLaser(uid);
+            if (laser != null)
+            {
+                if (_snappedLaser == laser) _snappedLaser = null;
+                if (_selectedLaser == laser)
+                {
+                    _selectedLaser = null;
+                    SetMenuVisible(_objectInfoMenu, false);
+                }
+
+                PropStreamer.Lasers.Remove(laser);
+                RemoveLaserFromEntityMenu(laser.Id);
                 return true;
             }
 
@@ -1776,6 +1955,17 @@ namespace MapEditor
             foreach (var marker in PropStreamer.Markers)
             {
                 if (marker.Uid == uid) return marker;
+            }
+            return null;
+        }
+
+        private static Laser FindLaser(int uid)
+        {
+            if (uid == 0) return null;
+
+            foreach (var laser in PropStreamer.Lasers)
+            {
+                if (laser.Uid == uid) return laser;
             }
             return null;
         }
@@ -1872,6 +2062,34 @@ namespace MapEditor
                     NearlyEqual(a.TeleportTarget.Value, b.TeleportTarget.Value, CollabPositionEpsilon));
         }
 
+        /// <summary>
+        /// Whether two lasers describe the same beams. Every authored field, with the same tolerance on
+        /// position and angle the rest of the sweep uses: nothing here is read back out of the game, so the
+        /// numbers cannot drift on their own, but a laser being dragged is compared against one that was
+        /// sent a frame earlier and the two must not differ by arithmetic alone.
+        /// </summary>
+        private static bool SameLaser(Laser a, Laser b)
+        {
+            return a.Pattern == b.Pattern &&
+                   NearlyEqual(a.Position, b.Position, CollabPositionEpsilon) &&
+                   NearlyEqual(a.Rotation, b.Rotation, CollabAngleEpsilon) &&
+                   Same(a.BeamLength, b.BeamLength) && Same(a.Width, b.Width) && Same(a.Height, b.Height) &&
+                   a.BeamCount == b.BeamCount && a.Density == b.Density && Same(a.Thickness, b.Thickness) &&
+                   a.Red == b.Red && a.Green == b.Green && a.Blue == b.Blue && a.Alpha == b.Alpha &&
+                   a.Textured == b.Textured && a.Rhythm == b.Rhythm &&
+                   Same(a.OnSeconds, b.OnSeconds) && Same(a.OffSeconds, b.OffSeconds) &&
+                   Same(a.ChasePeriod, b.ChasePeriod) && Same(a.ChaseOnFraction, b.ChaseOnFraction) &&
+                   Same(a.Amplitude, b.Amplitude) && Same(a.Frequency, b.Frequency) && Same(a.Speed, b.Speed) &&
+                   a.DealsDamage == b.DealsDamage && Same(a.DamagePerSecond, b.DamagePerSecond) &&
+                   Same(a.ActivationRange, b.ActivationRange) && Same(a.HitRadius, b.HitRadius) &&
+                   a.OnlyVisibleInEditor == b.OnlyVisibleInEditor;
+        }
+
+        private static bool Same(float a, float b)
+        {
+            return Math.Abs(a - b) <= CollabPositionEpsilon;
+        }
+
         private static bool SameQuaternion(Quaternion a, Quaternion b)
         {
             if (a == null || b == null) return a == null && b == null;
@@ -1927,9 +2145,6 @@ namespace MapEditor
                 PrimaryColor = o.PrimaryColor,
                 SecondaryColor = o.SecondaryColor,
                 Livery = o.Livery,
-                Amount = o.Amount,
-                RespawnTimer = o.RespawnTimer,
-                Flag = o.Flag,
                 Id = o.Id,
                 Shared = o.Shared,
                 Uid = o.Uid,
@@ -1954,6 +2169,47 @@ namespace MapEditor
                 OnlyVisibleInEditor = m.OnlyVisibleInEditor,
                 Id = m.Id,
                 Uid = m.Uid,
+            };
+        }
+
+        /// <summary>
+        /// A copy of the laser as the session was told about it, kept apart from the one the editor holds —
+        /// see <see cref="CloneObjectValue"/> for why the copy has to exist at all. The burn in progress is
+        /// deliberately left out: it is not part of the document and nobody else's business.
+        /// </summary>
+        private static Laser CloneLaserValue(Laser l)
+        {
+            return new Laser
+            {
+                Pattern = l.Pattern,
+                Position = l.Position,
+                Rotation = l.Rotation,
+                BeamLength = l.BeamLength,
+                Width = l.Width,
+                Height = l.Height,
+                BeamCount = l.BeamCount,
+                Density = l.Density,
+                Thickness = l.Thickness,
+                Red = l.Red,
+                Green = l.Green,
+                Blue = l.Blue,
+                Alpha = l.Alpha,
+                Textured = l.Textured,
+                Rhythm = l.Rhythm,
+                OnSeconds = l.OnSeconds,
+                OffSeconds = l.OffSeconds,
+                ChasePeriod = l.ChasePeriod,
+                ChaseOnFraction = l.ChaseOnFraction,
+                Amplitude = l.Amplitude,
+                Frequency = l.Frequency,
+                Speed = l.Speed,
+                DealsDamage = l.DealsDamage,
+                DamagePerSecond = l.DamagePerSecond,
+                ActivationRange = l.ActivationRange,
+                HitRadius = l.HitRadius,
+                OnlyVisibleInEditor = l.OnlyVisibleInEditor,
+                Id = l.Id,
+                Uid = l.Uid,
             };
         }
 

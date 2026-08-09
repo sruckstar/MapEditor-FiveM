@@ -149,10 +149,12 @@ namespace MapEditor
 		// Which members an object carries follows the same rules the XML follows.
 
 		/// <summary>
-		/// 2 added the optional <c>shared</c> flag on an object. Nothing else moved, and a version 1 document
-		/// reads unchanged: an absent flag is exactly what it means there too — decide by the rule.
+		/// 2 added the optional <c>shared</c> flag on an object. 3 added <c>lasers</c> and dropped pickups.
+		/// Older documents read unchanged: an absent <c>shared</c> means "decide by the rule" there too, an
+		/// absent <c>lasers</c> is a map with none, and a <c>Pickup</c> among the objects is skipped — the
+		/// editor no longer places them, and every field a pickup carried was about being one.
 		/// </summary>
-		private const int JsonFormatVersion = 2;
+		private const int JsonFormatVersion = 3;
 
 		private static string ToJson(Map map, bool forExport)
 		{
@@ -171,12 +173,21 @@ namespace MapEditor
 				markers.Add(MarkerToJson(m));
 			}
 
+			var lasers = Json.Array();
+			foreach (var l in map.Lasers)
+			{
+				// The same rule markers follow, for the same reason.
+				if (forExport && l.OnlyVisibleInEditor) continue;
+				lasers.Add(LaserToJson(l));
+			}
+
 			var document = Json.Object()
 				.Set("format", "mapeditor-map")
 				.Set("version", JsonFormatVersion)
 				.Set("objects", objects)
 				.Set("removeFromWorld", removed)
-				.Set("markers", markers);
+				.Set("markers", markers)
+				.Set("lasers", lasers);
 
 			if (map.Metadata != null) document.Set("metadata", MetadataToJson(map.Metadata));
 			return document.ToJson();
@@ -227,11 +238,48 @@ namespace MapEditor
 			if (o.ShouldSerializeSecondaryColor()) json.Set("secondaryColor", o.SecondaryColor);
 			if (o.ShouldSerializeLivery()) json.Set("livery", o.Livery);
 
-			if (o.ShouldSerializeAmount()) json.Set("amount", o.Amount);
-			if (o.ShouldSerializeRespawnTimer()) json.Set("respawnTimer", o.RespawnTimer);
-			if (o.ShouldSerializeFlag()) json.Set("flag", o.Flag);
-
 			return json;
+		}
+
+		/// <summary>
+		/// A laser, written out in full — every field, every time, with no ShouldSerialize equivalent.
+		///
+		/// Unlike a map object, whose members depend on whether it is a prop or a ped, a laser has one shape
+		/// and the fields a given pattern does not use are still the builder's: switching a wall back to a
+		/// wave has to give them the amplitude they chose the first time. The whole thing is about seventy
+		/// bytes, which is a hundredth of what one prop costs.
+		/// </summary>
+		private static Json LaserToJson(Laser l)
+		{
+			return Json.Object()
+				.Set("pattern", l.Pattern.ToString())
+				.Set("position", VectorToJson(l.Position))
+				.Set("rotation", VectorToJson(l.Rotation))
+				.Set("beamLength", l.BeamLength)
+				.Set("width", l.Width)
+				.Set("height", l.Height)
+				.Set("beamCount", l.BeamCount)
+				.Set("density", l.Density.ToString())
+				.Set("thickness", l.Thickness)
+				.Set("red", l.Red)
+				.Set("green", l.Green)
+				.Set("blue", l.Blue)
+				.Set("alpha", l.Alpha)
+				.Set("textured", l.Textured)
+				.Set("rhythm", l.Rhythm.ToString())
+				.Set("onSeconds", l.OnSeconds)
+				.Set("offSeconds", l.OffSeconds)
+				.Set("chasePeriod", l.ChasePeriod)
+				.Set("chaseOnFraction", l.ChaseOnFraction)
+				.Set("amplitude", l.Amplitude)
+				.Set("frequency", l.Frequency)
+				.Set("speed", l.Speed)
+				.Set("dealsDamage", l.DealsDamage)
+				.Set("damagePerSecond", l.DamagePerSecond)
+				.Set("activationRange", l.ActivationRange)
+				.Set("hitRadius", l.HitRadius)
+				.Set("onlyVisibleInEditor", l.OnlyVisibleInEditor)
+				.Set("id", l.Id);
 		}
 
 		private static Json MarkerToJson(Marker m)
@@ -298,9 +346,23 @@ namespace MapEditor
 				throw new FormatException("A map document is a JSON object.");
 
 			var map = new Map();
-			foreach (var item in document["objects"].Items) map.Objects.Add(ObjectFromJson(item));
-			foreach (var item in document["removeFromWorld"].Items) map.RemoveFromWorld.Add(ObjectFromJson(item));
+
+			// Null is what a pickup reads back as, and there is nothing to put in its place: the editor no
+			// longer creates them and every field one carried was about being one. See ObjectFromJson.
+			foreach (var item in document["objects"].Items)
+			{
+				var o = ObjectFromJson(item);
+				if (o != null) map.Objects.Add(o);
+			}
+
+			foreach (var item in document["removeFromWorld"].Items)
+			{
+				var o = ObjectFromJson(item);
+				if (o != null) map.RemoveFromWorld.Add(o);
+			}
+
 			foreach (var item in document["markers"].Items) map.Markers.Add(MarkerFromJson(item));
+			foreach (var item in document["lasers"].Items) map.Lasers.Add(LaserFromJson(item));
 
 			if (document.Has("metadata")) map.Metadata = MetadataFromJson(document["metadata"]);
 			return map;
@@ -348,6 +410,16 @@ namespace MapEditor
 			return json == null || json.Kind != JsonKind.Object ? null : MarkerFromJson(json);
 		}
 
+		public static Json LaserJson(Laser l)
+		{
+			return LaserToJson(l);
+		}
+
+		public static Laser LaserFrom(Json json)
+		{
+			return json == null || json.Kind != JsonKind.Object ? null : LaserFromJson(json);
+		}
+
 		public static Json MetadataJson(MapMetadata meta)
 		{
 			return MetadataToJson(meta);
@@ -360,10 +432,17 @@ namespace MapEditor
 
 		private static MapObject ObjectFromJson(Json json)
 		{
+			var typeName = json["type"].AsString("Prop");
+
+			// A map written while the editor still placed pickups. Null rather than a prop wearing a pickup's
+			// model: the game's pickup models are not props, and one would stand there as a floating oddity
+			// nobody put down. What replaced them is Laser, which no old document can have.
+			if (string.Equals(typeName, "Pickup", StringComparison.OrdinalIgnoreCase)) return null;
+
 			var o = new MapObject();
 
 			ObjectTypes type;
-			if (Enum.TryParse(json["type"].AsString("Prop"), out type)) o.Type = type;
+			if (Enum.TryParse(typeName, out type)) o.Type = type;
 
 			o.Hash = json["hash"].AsInt(0);
 			o.Position = VectorFromJson(json["position"]);
@@ -398,11 +477,57 @@ namespace MapEditor
 			// A map written before liveries were kept says nothing about them, and -1 is "none".
 			o.Livery = json["livery"].AsInt(-1);
 
-			o.Amount = json["amount"].AsInt(0);
-			o.RespawnTimer = json["respawnTimer"].AsInt(0);
-			o.Flag = json["flag"].AsInt(0);
-
 			return o;
+		}
+
+		/// <summary>
+		/// A laser, read back. Every default is the one <see cref="Laser"/>'s field carries, so a document
+		/// written by a future editor that has one more knob still opens with the knob it does not know
+		/// about set to something sensible rather than to zero.
+		/// </summary>
+		private static Laser LaserFromJson(Json json)
+		{
+			var l = new Laser
+			{
+				Position = VectorFromJson(json["position"]),
+				Rotation = VectorFromJson(json["rotation"]),
+				BeamLength = json["beamLength"].AsFloat(8f),
+				Width = json["width"].AsFloat(6f),
+				Height = json["height"].AsFloat(3f),
+				BeamCount = json["beamCount"].AsInt(8),
+				Thickness = json["thickness"].AsFloat(0.03f),
+				Red = json["red"].AsInt(255),
+				Green = json["green"].AsInt(40),
+				Blue = json["blue"].AsInt(40),
+				Alpha = json["alpha"].AsInt(255),
+				Textured = json["textured"].AsBool(true),
+				OnSeconds = json["onSeconds"].AsFloat(1.5f),
+				OffSeconds = json["offSeconds"].AsFloat(0.5f),
+				ChasePeriod = json["chasePeriod"].AsFloat(3f),
+				ChaseOnFraction = json["chaseOnFraction"].AsFloat(0.5f),
+				Amplitude = json["amplitude"].AsFloat(1.5f),
+				Frequency = json["frequency"].AsFloat(0.6f),
+				Speed = json["speed"].AsFloat(1f),
+				DealsDamage = json["dealsDamage"].AsBool(true),
+				DamagePerSecond = json["damagePerSecond"].AsFloat(250f),
+				ActivationRange = json["activationRange"].AsFloat(60f),
+				HitRadius = json["hitRadius"].AsFloat(0.35f),
+				OnlyVisibleInEditor = json["onlyVisibleInEditor"].AsBool(false),
+				Id = json["id"].AsInt(0),
+			};
+
+			// Written by name rather than by number, so that inserting a pattern into the enum cannot silently
+			// turn every wall in every saved map into a wave. An unknown name keeps the field's default.
+			LaserPattern pattern;
+			if (Enum.TryParse(json["pattern"].AsString(""), out pattern)) l.Pattern = pattern;
+
+			LaserDensity density;
+			if (Enum.TryParse(json["density"].AsString(""), out density)) l.Density = density;
+
+			LaserRhythm rhythm;
+			if (Enum.TryParse(json["rhythm"].AsString(""), out rhythm)) l.Rhythm = rhythm;
+
+			return l;
 		}
 
 		private static Marker MarkerFromJson(Json json)
@@ -467,13 +592,22 @@ namespace MapEditor
 
 			var map = new Map();
 
+			// Nulls are the pickups an old document has in it; see ObjectFromXml and ObjectFromJson.
 			var objects = root.Element("Objects");
 			if (objects != null)
-				foreach (var element in objects.Elements("MapObject")) map.Objects.Add(ObjectFromXml(element));
+				foreach (var element in objects.Elements("MapObject"))
+				{
+					var o = ObjectFromXml(element);
+					if (o != null) map.Objects.Add(o);
+				}
 
 			var removed = root.Element("RemoveFromWorld");
 			if (removed != null)
-				foreach (var element in removed.Elements("MapObject")) map.RemoveFromWorld.Add(ObjectFromXml(element));
+				foreach (var element in removed.Elements("MapObject"))
+				{
+					var o = ObjectFromXml(element);
+					if (o != null) map.RemoveFromWorld.Add(o);
+				}
 
 			var markers = root.Element("Markers");
 			if (markers != null)
@@ -487,10 +621,13 @@ namespace MapEditor
 
 		private static MapObject ObjectFromXml(XElement element)
 		{
+			var typeName = Xml.Text(element, "Type") ?? "Prop";
+			if (string.Equals(typeName, "Pickup", StringComparison.OrdinalIgnoreCase)) return null;
+
 			var o = new MapObject();
 
 			ObjectTypes type;
-			if (Enum.TryParse(Xml.Text(element, "Type") ?? "Prop", out type)) o.Type = type;
+			if (Enum.TryParse(typeName, out type)) o.Type = type;
 
 			var id = element.Attribute("Id");
 			if (id != null) o.Id = id.Value;
@@ -521,10 +658,6 @@ namespace MapEditor
 			o.PrimaryColor = Xml.Int(element, "PrimaryColor", 0);
 			o.SecondaryColor = Xml.Int(element, "SecondaryColor", 0);
 			o.Livery = Xml.Int(element, "Livery", -1);
-
-			o.Amount = Xml.Int(element, "Amount", 0);
-			o.RespawnTimer = Xml.Int(element, "RespawnTimer", 0);
-			o.Flag = Xml.Int(element, "Flag", 0);
 
 			return o;
 		}
@@ -908,10 +1041,20 @@ local SCAN_PER_TICK = 128
 -- A ped stands on its feet and a prop hangs from its centre; the editor stores the centre for both.
 local PED_GROUND_OFFSET = 1.0
 
+-- How many laser beams may be drawn in one frame, across every laser of the map. A ceiling rather than a
+-- budget: sixty overlapping lasers in one room is a mistake, and the frame it costs should be spent
+-- finding that out.
+local LASER_MAX_BEAMS = 400
+
+-- The multiplayer dictionary the game's own laser beams are textured from.
+local BEAM_DICT = 'mpinvperscommon'
+local BEAM_CORE = 'beam_middle'
+local BEAM_GLOW = 'beam_glow_tapered'
+
 local entries = {}
 local markers = {}
+local lasers = {}
 local hidden = {}
-local pickupHandles = {}
 local scanCursor = 1
 
 local function streamingEnabled()
@@ -1127,6 +1270,354 @@ local function drawMarkers()
     end
 end
 
+--[[
+    Lasers.
+
+    Neither are these entities: a laser is the row of numbers the editor saved, and the beams are rebuilt
+    from it on every frame. What follows is the same arithmetic Client/LaserRenderer.cs does, which is
+    itself the game's own fmmc_lasers.c behind a smaller surface — and it is written out a second time here
+    for the same reason drawMarkers is: an exported map runs with nothing but FiveM underneath it, so there
+    is no Map Editor to ask. Change one of the two and the other has to follow, or a map will look different
+    exported from how it looked in the editor it was built in.
+
+    The clock is the game's, not the resource's: every client of a server reads GetGameTimer within a frame
+    of every other, so a blinking laser blinks together for everybody without a single byte being sent.
+]]
+
+local function laserDensity(name)
+    if name == 'Sparse' then return 0.45, 1.6, 0.5 end
+    if name == 'Low' then return 0.7, 1.25, 0.75 end
+    if name == 'High' then return 1.4, 0.8, 1.3 end
+    if name == 'Maximum' then return 2.0, 0.55, 1.6 end
+    return 1.0, 1.0, 1.0
+end
+
+local function normalize(v)
+    local length = #v
+    if length < 0.00001 then return vector3(0.0, 0.0, 0.0) end
+    return v / length
+end
+
+local function cross(a, b)
+    return vector3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+end
+
+--- The three axes a laser's pattern is laid out along, from its pitch/roll/yaw.
+local function laserAxes(l)
+    local z, x = math.rad(l.rotation.z), math.rad(l.rotation.x)
+    local flatten = math.abs(math.cos(x))
+    local forward = normalize(vector3(-math.sin(z) * flatten, math.cos(z) * flatten, math.sin(x)))
+    if #forward < 0.00001 then forward = vector3(0.0, 1.0, 0.0) end
+
+    local flat = normalize(cross(forward, vector3(0.0, 0.0, 1.0)))
+    if #flat < 0.00001 then flat = vector3(1.0, 0.0, 0.0) end
+    local perp = cross(flat, forward)
+
+    local roll = math.rad(l.rotation.y)
+    local c, s = math.cos(roll), math.sin(roll)
+    return forward, flat * c + perp * s, perp * c - flat * s
+end
+
+local function laserBeamCount(l)
+    if l.pattern == 'Single' then return 1 end
+    local countScale = laserDensity(l.density)
+    local count = math.ceil(math.max(1, l.beamCount) * countScale)
+    if count < 1 then count = 1 end
+    if count > LASER_MAX_BEAMS then count = LASER_MAX_BEAMS end
+    return count
+end
+
+--- Whether beam `index` is lit at `time`. Steady, Blink and Chase; the rhythm runs along the beams of one
+--- laser rather than across several, which is what makes Chase a gap somebody can time their way through.
+local function laserLit(l, index, time)
+    if l.rhythm == 'Blink' then
+        local on = math.max(0.0, l.onSeconds)
+        local period = on + math.max(0.0, l.offSeconds)
+        if period <= 0.0001 then return true end
+        return time % period < on
+    end
+
+    if l.rhythm == 'Chase' then
+        local period = math.max(0.0001, l.chasePeriod)
+        local count = math.max(1, laserBeamCount(l))
+        local fraction = math.min(1.0, math.max(0.0, l.chaseOnFraction))
+        return (time / period + index / count) % 1.0 < fraction
+    end
+
+    return true
+end
+
+--- This frame's beams for one laser, as { s = start, e = end, i = index } — centred on its position, so a
+--- laser turns and moves about the middle of itself.
+local function laserBeams(l, time)
+    local forward, right, up = laserAxes(l)
+    local count = laserBeamCount(l)
+    local _, spacing = laserDensity(l.density)
+    local length = math.max(0.05, l.beamLength)
+    local half = forward * (length * 0.5)
+    local out = {}
+
+    if l.pattern == 'Single' then
+        out[1] = { s = l.position - half, e = l.position + half, i = 0 }
+        return out
+    end
+
+    if l.pattern == 'Wall' then
+        local height = math.max(0.0, l.height) * spacing
+        local step = count > 1 and height / (count - 1) or 0.0
+        local first = l.position - up * (height * 0.5)
+        local run = right * (length * 0.5)
+        for i = 1, count do
+            local centre = first + up * (step * (i - 1))
+            out[i] = { s = centre - run, e = centre + run, i = i - 1 }
+        end
+        return out
+    end
+
+    local width = math.max(0.0, l.width) * spacing
+    local step = count > 1 and width / (count - 1) or 0.0
+    local first = l.position - right * (width * 0.5)
+
+    if l.pattern == 'Wave' then
+        local phase = time * l.speed
+        for i = 1, count do
+            local along = step * (i - 1)
+            local swing = l.amplitude * math.sin((along + phase) * l.frequency)
+            local centre = first + right * along + up * swing
+            out[i] = { s = centre - half, e = centre + half, i = i - 1 }
+        end
+        return out
+    end
+
+    -- Grid.
+    for i = 1, count do
+        local centre = first + right * (step * (i - 1))
+        out[i] = { s = centre - half, e = centre + half, i = i - 1 }
+    end
+    return out
+end
+
+local function whiten(channel)
+    return math.min(255, channel + 160)
+end
+
+--[[
+    Six of the natives the beams are drawn with have no name in this runtime's list, so they are called by
+    hash — the same six, and for the same reason, as in Client/LaserRenderer.cs. A hash a future game build
+    moves would otherwise throw on every beam of every frame, so each group is tried, switched off on its
+    first failure, and said once in the console. A laser with its glow switched off is still a laser.
+]]
+local DRAW_SPRITE_POLY = 0x29280002282F1928
+local DRAW_CAPSULE_LIGHT = 0x330F4FA20FB57738
+local DRAW_MARKER_GLOW = 0xE59B0A106CC15FC2
+local SET_BLEND_STATE_ADDITIVE = 0x01677A72A8BDCD1A
+local SET_BLEND_STATE_NORMAL = 0x976D155439608592
+local GENERATE_PED_DAMAGE_EVENT = 0x6D1FCD0950EFA3DD
+
+local glowsOk, texturedOk, blendOk, damageEventOk = true, true, true, true
+
+--- Calls a native by hash and reports whether it worked. `flag` names the group in the message.
+local function tryNative(flag, what, hash, ...)
+    if not flag then return false end
+    local ok, err = pcall(Citizen.InvokeNative, hash, ...)
+    if not ok then
+        print(('^3[map] the %s native is unavailable (%s); lasers carry on without it.^7'):format(what, err))
+    end
+    return ok
+end
+
+--- One beam-body quad, as two triangles drawn from both sides: the billboard is computed rather than asked
+--- of the game, so which face ends up towards the eye is not promised.
+local function laserQuad(mid, along, across, halfLen, halfWidth, r, g, b, a, texture)
+    local l = along * halfLen
+    local w = across * halfWidth
+    local v0, v3, v6, v9 = mid - w + l, mid + w + l, mid - w - l, mid + w - l
+    local order = { v3, v0, v9, v6, v9, v0, v9, v0, v3, v0, v9, v6 }
+
+    for i = 1, 12, 3 do
+        local p1, p2, p3 = order[i], order[i + 1], order[i + 2]
+        if texture and texturedOk then
+            texturedOk = tryNative(texturedOk, 'textured polygon', DRAW_SPRITE_POLY,
+                p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p3.x, p3.y, p3.z,
+                r, g, b, a, BEAM_DICT, texture, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0)
+        else
+            DrawPoly(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p3.x, p3.y, p3.z, r, g, b, a)
+        end
+    end
+end
+
+--- One beam, in the four layers the game's own laser grid draws it in: a capsule light along its length, a
+--- glowing dot at each end, a soft tapered-glow ribbon and a bright core ribbon.
+local function drawBeam(l, beam, camera, textured)
+    local delta = beam.e - beam.s
+    local length = #delta
+    if length < 0.0001 then return end
+
+    local dir = delta / length
+    local mid = (beam.s + beam.e) * 0.5
+    local r, g, b, a = l.red, l.green, l.blue, l.alpha
+
+    if glowsOk then
+        local head, tail = beam.s + dir * 0.05, beam.e - dir * 0.05
+        glowsOk = tryNative(glowsOk, 'capsule light', DRAW_CAPSULE_LIGHT,
+            mid.x, mid.y, mid.z, dir.x, dir.y, dir.z, r, g, b,
+            1.0, 6.0, math.max(0.05, length - 0.05), 250.0)
+        glowsOk = tryNative(glowsOk, 'marker glow', DRAW_MARKER_GLOW,
+            head.x, head.y, head.z, 0.116, r, g, b, 0.9)
+        glowsOk = tryNative(glowsOk, 'marker glow', DRAW_MARKER_GLOW,
+            tail.x, tail.y, tail.z, 0.116, r, g, b, 0.9)
+    end
+
+    local toCam = camera - mid
+    if #toCam < 0.0001 then toCam = vector3(0.0, 0.0, 1.0) end
+    local across = normalize(cross(dir, normalize(toCam)))
+    if #across < 0.00001 then across = normalize(cross(dir, vector3(0.0, 0.0, 1.0))) end
+    if #across < 0.00001 then return end
+
+    local thickness = math.max(0.001, l.thickness)
+    local halfLen = length * 0.5
+
+    if textured and texturedOk then
+        laserQuad(mid, dir, across, halfLen + 0.1, thickness * 1.7, r, g, b, a, BEAM_GLOW)
+        laserQuad(mid, dir, across, halfLen + 0.1, thickness, whiten(r), whiten(g), whiten(b), a, BEAM_CORE)
+    else
+        laserQuad(mid, dir, across, halfLen, thickness * 1.6, r, g, b, math.min(a, 200), nil)
+        laserQuad(mid, dir, across, halfLen, thickness * 0.5, whiten(r), whiten(g), whiten(b), a, nil)
+    end
+end
+
+--- The shortest distance between two segments, and where on the first it is measured from. The narrow
+--- phase: the first segment is the beam, the second the line down the middle of the ped.
+local function segmentDistance(p1, q1, p2, q2)
+    local d1, d2, r = q1 - p1, q2 - p2, p1 - p2
+    local a, e, f = #(d1) * #(d1), #(d2) * #(d2), d2.x * r.x + d2.y * r.y + d2.z * r.z
+    local s, t = 0.0, 0.0
+
+    if a <= 0.000001 and e <= 0.000001 then return #(p1 - p2), p1 end
+
+    if a <= 0.000001 then
+        t = math.min(1.0, math.max(0.0, f / e))
+    else
+        local c = d1.x * r.x + d1.y * r.y + d1.z * r.z
+        if e <= 0.000001 then
+            s = math.min(1.0, math.max(0.0, -c / a))
+        else
+            local b = d1.x * d2.x + d1.y * d2.y + d1.z * d2.z
+            local denom = a * e - b * b
+            if denom > 0.000001 then s = math.min(1.0, math.max(0.0, (b * f - c * e) / denom)) end
+            t = (b * s + f) / e
+            if t < 0.0 then
+                t = 0.0
+                s = math.min(1.0, math.max(0.0, -c / a))
+            elseif t > 1.0 then
+                t = 1.0
+                s = math.min(1.0, math.max(0.0, (b - c) / a))
+            end
+        end
+    end
+
+    local onFirst = p1 + d1 * s
+    return #(onFirst - (p2 + d2 * t)), onFirst
+end
+
+--- Whether something solid stands between the emitter and the point the beam met the player. One probe for
+--- the whole laser: a crate that hides them from the nearest beam hides them from its neighbours too.
+local function laserBlocked(from, to, ped)
+    local handle = StartExpensiveSynchronousShapeTestLosProbe(
+        from.x, from.y, from.z, to.x, to.y, to.z, 1 + 16 + 32, ped, 7)
+    local status, hit = GetShapeTestResult(handle)
+    return status == 2 and hit
+end
+
+local laserLastStamp = 0
+
+local function drawLasers()
+    if #lasers == 0 then return end
+
+    local now = GetGameTimer()
+    local elapsed = laserLastStamp == 0 and 0 or (now - laserLastStamp)
+    laserLastStamp = now
+    local frameSeconds = elapsed <= 0 and 0.0 or math.min(0.25, elapsed / 1000.0)
+
+    local time = now / 1000.0
+    local ped = PlayerPedId()
+    local alive = ped ~= 0 and not IsEntityDead(ped)
+    local here = GetEntityCoords(ped, true)
+    local camera = GetFinalRenderedCamCoord()
+    local drawn = 0
+
+    if not HasStreamedTextureDictLoaded(BEAM_DICT) then RequestStreamedTextureDict(BEAM_DICT, false) end
+    local ready = HasStreamedTextureDictLoaded(BEAM_DICT)
+
+    -- Additive while the beams are drawn, normal again afterwards: overlapping beams have to brighten, and
+    -- the blend state is the game's rather than this resource's. Switched on by the first beam rather than
+    -- at the top, so that a map whose lasers are all on the other side of town brackets nothing.
+    local blendOn = false
+
+    for i = 1, #lasers do
+        local l = lasers[i]
+
+        if drawn < LASER_MAX_BEAMS and
+            (l.activationRange <= 0.0 or #(here - l.position) <= l.activationRange) then
+
+            local low, high = here + vector3(0.0, 0.0, 0.3), here + vector3(0.0, 0.0, 1.6)
+            local beams = laserBeams(l, time)
+            local burning, hitPoint, hitFrom = 0, nil, nil
+            local radius = math.max(0.01, l.hitRadius)
+
+            for b = 1, #beams do
+                if drawn >= LASER_MAX_BEAMS then break end
+                local beam = beams[b]
+
+                if laserLit(l, beam.i, time) then
+                    if not blendOn then
+                        blendOn = true
+                        blendOk = tryNative(blendOk, 'additive blend state', SET_BLEND_STATE_ADDITIVE)
+                    end
+
+                    drawBeam(l, beam, camera, l.textured and ready)
+                    drawn = drawn + 1
+
+                    if alive then
+                        local gap, onBeam = segmentDistance(beam.s, beam.e, low, high)
+                        if gap <= radius then
+                            burning = burning + 1
+                            if not hitPoint then hitPoint, hitFrom = onBeam, beam.s end
+                        end
+                    end
+                end
+            end
+
+            if hitPoint and alive and not laserBlocked(hitFrom, hitPoint, ped) then
+                if l.dealsDamage then
+                    local _, _, damageScale = laserDensity(l.density)
+                    l.debt = (l.debt or 0.0) + l.damagePerSecond * damageScale * burning * frameSeconds
+
+                    if damageEventOk and not IsPedRagdoll(ped) then
+                        damageEventOk = tryNative(damageEventOk, 'ped damage event', GENERATE_PED_DAMAGE_EVENT,
+                            ped, hitPoint.x, hitPoint.y, hitPoint.z, GetHashKey('WEAPON_PISTOL'))
+                    end
+
+                    local whole = math.floor(l.debt)
+                    if whole > 0 then
+                        l.debt = l.debt - whole
+                        ApplyDamageToPed(ped, whole, true, 0)
+                        if IsEntityDead(ped) then StartEntityFire(ped) end
+                    end
+                else
+                    l.debt = 0.0
+                end
+            else
+                l.debt = 0.0
+            end
+        else
+            l.debt = 0.0
+        end
+    end
+
+    if blendOn then blendOk = tryNative(blendOk, 'normal blend state', SET_BLEND_STATE_NORMAL) end
+end
+
 --- The game streams its own props back in as the player comes and goes. CREATE_MODEL_HIDE survives that,
 --- unlike deleting the prop, which is why the removals are applied once here rather than every frame.
 local function applyRemovals()
@@ -1150,14 +1641,7 @@ local function readMap()
     end
 
     for _, o in ipairs(document.objects or {}) do
-        if o.type == 'Pickup' then
-            -- A pickup is not an entity and the game keeps it out of the entity budget: it has a range of
-            -- its own, so it is put in once and left to it rather than streamed.
-            local p = vec(o.position)
-            local handle = CreatePickupRotate(o.hash, p.x, p.y, p.z, 0.0, 0.0,
-                vec(o.rotation).z, o.flag or 515, o.amount or 0, 0, false, 0)
-            if handle ~= 0 then pickupHandles[#pickupHandles + 1] = handle end
-        elseif o.type == 'Prop' or o.type == 'Vehicle' or o.type == 'Ped' then
+        if o.type == 'Prop' or o.type == 'Vehicle' or o.type == 'Ped' then
             entries[#entries + 1] = {
                 kind = o.type,
                 hash = o.hash,
@@ -1198,6 +1682,45 @@ local function readMap()
         }
     end
 
+    -- Every default here is the one the editor's own Laser carries, so a map written by a later editor that
+    -- has one more knob still runs, with the knob it does not know about at something sensible.
+    --
+    -- The counts and colours go through math.floor and the sizes through +0.0 rather than being taken as
+    -- they come: json.decode hands back whichever numeric subtype the text happened to look like, and the
+    -- native invoker picks int or float from that subtype. A colour that arrived as 255.0 would be pushed
+    -- as a float into a parameter the native reads as an integer.
+    for _, l in ipairs(document.lasers or {}) do
+        lasers[#lasers + 1] = {
+            pattern = l.pattern or 'Grid',
+            position = vec(l.position),
+            rotation = vec(l.rotation),
+            beamLength = (l.beamLength or 8.0) + 0.0,
+            width = (l.width or 6.0) + 0.0,
+            height = (l.height or 3.0) + 0.0,
+            beamCount = math.floor(l.beamCount or 8),
+            density = l.density or 'Medium',
+            thickness = (l.thickness or 0.03) + 0.0,
+            red = math.floor(l.red or 255),
+            green = math.floor(l.green or 40),
+            blue = math.floor(l.blue or 40),
+            alpha = math.floor(l.alpha or 255),
+            textured = l.textured ~= false,
+            rhythm = l.rhythm or 'Steady',
+            onSeconds = l.onSeconds or 1.5,
+            offSeconds = l.offSeconds or 0.5,
+            chasePeriod = l.chasePeriod or 3.0,
+            chaseOnFraction = l.chaseOnFraction or 0.5,
+            amplitude = l.amplitude or 1.5,
+            frequency = l.frequency or 0.6,
+            speed = l.speed or 1.0,
+            dealsDamage = l.dealsDamage ~= false,
+            damagePerSecond = l.damagePerSecond or 250.0,
+            activationRange = l.activationRange or 60.0,
+            hitRadius = l.hitRadius or 0.35,
+            debt = 0.0,
+        }
+    end
+
     return true
 end
 
@@ -1226,6 +1749,7 @@ Citizen.CreateThread(function()
         Wait(0)
         stream()
         drawMarkers()
+        drawLasers()
     end
 end)
 
@@ -1242,10 +1766,7 @@ AddEventHandler('onResourceStop', function(resource)
         end
     end
 
-    for i = 1, #pickupHandles do
-        RemovePickup(pickupHandles[i])
-    end
-
+    -- Nothing to take down for the markers or the lasers: neither is in the world between frames.
     for i = 1, #hidden do
         local h = hidden[i]
         RemoveModelHide(h.position.x, h.position.y, h.position.z, 1.0, h.hash, false)

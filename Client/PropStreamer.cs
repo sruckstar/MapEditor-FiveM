@@ -75,11 +75,17 @@ namespace MapEditor
 
 		public static List<int> Peds = new List<int>();
 
-        public static List<DynamicPickup> Pickups = new List<DynamicPickup>();
-
         public static Dictionary<int, string> Identifications = new Dictionary<int, string>();
 
 		public static List<Marker> Markers = new List<Marker>();
+
+		/// <summary>
+		/// The lasers of the map. Beside the markers rather than among the entities, and for the same reason:
+		/// neither is a thing in the world. A laser is a row of numbers that <see cref="LaserRenderer"/>
+		/// turns into beams once a frame, so it costs no entity, streams nowhere, and comes out identical on
+		/// every client that reads the same document. See <see cref="Laser"/>.
+		/// </summary>
+		public static List<Laser> Lasers = new List<Laser>();
 
 		public static Dictionary<int, string> ActiveScenarios = new Dictionary<int, string>();
 
@@ -258,12 +264,9 @@ namespace MapEditor
 		/// <summary>
 		/// Whether the world would move this entity of the map being edited if it were left to itself: a prop
 		/// with its physics on, a door, or a vehicle or ped that is not frozen scenery.
-		///
-		/// A pickup is never one: it is put down frozen and stays there. See <see cref="CreatePickup"/>.
 		/// </summary>
 		public static bool IsDynamic(int handle)
 		{
-			if (IsPickup(handle)) return false;
 			return !StaticProps.Contains(handle) || Doors.Contains(handle);
 		}
 
@@ -510,85 +513,6 @@ namespace MapEditor
             return veh;
 		}
 
-	    private static int _pickupIds = 0;
-
-	    /// <summary>
-	    /// Pickups are the one thing here that cannot be local: CREATE_PICKUP_ROTATE is a networked native.
-	    /// Kept working rather than removed, so a map that has them in it still loads.
-	    /// </summary>
-        public static async Task<DynamicPickup> CreatePickup(Model model, Vector3 position, float heading, int amount, bool dynamic, Quaternion q = null)
-        {
-            var v_4 = 515;
-            int newPickup = -1;
-
-            if (Game.Player.Character.IsInRangeOf(position, 30f))
-            {
-                newPickup = Function.Call<int>(Hash.CREATE_PICKUP_ROTATE, model.Hash, position.X, position.Y,
-                    position.Z, 0, 0, heading, v_4, amount, 0, false, 0);
-            }
-
-            var pcObj = new DynamicPickup(newPickup);
-            pcObj.Flag = v_4;
-            pcObj.Amount = amount;
-            pcObj.RealPosition = position;
-            if (newPickup != -1)
-            {
-                var start = 0;
-                while (pcObj.ObjectHandle == -1 && start < 20)
-                {
-                    start++;
-                    await Frame.Next();
-                }
-
-                pcObj.Dynamic = false;
-
-                var pickupObject = Compat.PropFrom(pcObj.ObjectHandle);
-                if (pickupObject != null)
-                {
-                    pickupObject.IsPersistent = true;
-                    if (q != null)
-                        Quaternion.SetEntityQuaternion(pickupObject, q);
-                }
-                pcObj.UpdatePos();
-            }
-
-            Pickups.Add(pcObj);
-            pcObj.PickupHash = model.Hash;
-            pcObj.Timeout = 1;
-            pcObj.UID = _pickupIds++;
-            return pcObj;
-        }
-
-	    public static DynamicPickup GetPickup(int objectHandle)
-	    {
-            DynamicPickup pc = null;
-            foreach (var pickup in Pickups)
-            {
-                if (pickup.ObjectHandle == objectHandle)
-                {
-                    pc = pickup;
-                    break;
-                }
-            }
-
-		    return pc;
-	    }
-
-        public static DynamicPickup GetPickupByUID(int uid)
-        {
-            DynamicPickup pc = null;
-            foreach (var pickup in Pickups)
-            {
-                if (pickup.UID == uid)
-                {
-                    pc = pickup;
-                    break;
-                }
-            }
-
-            return pc;
-        }
-
         public static void RemoveVehicle(int handle)
 		{
 		    var veh = Compat.VehicleFrom(handle);
@@ -631,43 +555,14 @@ namespace MapEditor
 		        model.MarkAsNoLongerNeeded();
 		}
 
-	    public static void RemovePickup(int objectHandle)
-	    {
-	        DynamicPickup pc = null;
-	        foreach (var pickup in Pickups)
-	        {
-	            if (pickup.ObjectHandle == objectHandle)
-	            {
-	                pc = pickup;
-                    pc.Remove();
-	                break;
-	            }
-	        }
-
-	        if (pc != null) Pickups.Remove(pc);
-	    }
-
-	    public static bool IsPickup(int entity)
-	    {
-	        return Pickups.Any(pickup => pickup.ObjectHandle == entity);
-	    }
-
 	    public static void RemoveEntity(int handle)
 		{
 		    var entity = handle != 0 ? Compat.Ent(handle) : null;
 		    if (entity != null)
 		        ReleaseModel(entity.Model);
 
-	        if (IsPickup(handle))
-	        {
-	            var ourPickup = GetPickup(handle);
-	            if (Pickups.Contains(ourPickup)) Pickups.Remove(ourPickup);
-                ourPickup.Remove();
-	        }
-	        else
-	        {
-	            entity?.Delete();
-	        }
+	        entity?.Delete();
+
 	        if (Peds.Contains(handle)) Peds.Remove(handle);
 			if (Vehicles.Contains(handle)) Vehicles.Remove(handle);
 			if (StreamedInHandles.Contains(handle)) StreamedInHandles.Remove(handle);
@@ -690,10 +585,8 @@ namespace MapEditor
 			Intangible.Clear();
 			Vehicles.ForEach(v => Compat.Ent(v)?.Delete());
 			Peds.ForEach(v => Compat.Ent(v)?.Delete());
-            Pickups.ForEach(p => p.Remove());
 			Vehicles.Clear();
 			Peds.Clear();
-            Pickups.Clear();
 		}
 
 		// --- The game's own objects, taken out of the map --------------------------------------------
@@ -983,23 +876,6 @@ namespace MapEditor
 				if (snapshot != null) outList.Add(snapshot);
 			}
 
-			foreach (DynamicPickup p in Pickups)
-			{
-				var pickupObject = Compat.Ent(p.ObjectHandle);
-				outList.Add(new MapObject()
-				{
-					Dynamic = p.Dynamic,
-					Hash = p.PickupHash,
-					Position = p.RealPosition,
-					Quaternion = pickupObject != null ? Quaternion.GetEntityQuaternion(pickupObject) : new Quaternion(),
-					Rotation = pickupObject?.Rotation ?? new Vector3(),
-					Type = ObjectTypes.Pickup,
-					Amount = p.Amount,
-					RespawnTimer = p.Timeout,
-					Flag = p.Flag,
-				});
-			}
-
 			return outList.ToArray();
 		}
 
@@ -1009,7 +885,6 @@ namespace MapEditor
 			outHandles.AddRange(StreamedInHandles);
 			outHandles.AddRange(Vehicles);
 			outHandles.AddRange(Peds);
-            outHandles.AddRange(Pickups.Select(p => p.ObjectHandle));
 			return outHandles.ToArray();
 		}
 
@@ -1020,8 +895,10 @@ namespace MapEditor
 		///
 		/// <paramref name="isInFreecam"/> is passed in rather than read off the editor, as the SP build did,
 		/// so that the map and its spawning do not depend on the editor class — the two are ported separately.
+		/// <paramref name="viewPosition"/> is there for the same reason: the laser beams are billboarded at
+		/// whichever camera is rendering, and which one that is belongs to the editor rather than to the map.
 		/// </summary>
-		public static void Tick(bool isInFreecam)
+		public static void Tick(bool isInFreecam, Vector3 viewPosition)
 		{
             foreach (Marker marker in Markers)
 			{
@@ -1051,12 +928,15 @@ namespace MapEditor
 		        if (!isInRangeOfAny) _justTeleported = false;
 		    }
 
-		    foreach (DynamicPickup pickup in Pickups)
-		    {
-		        // Respawning a pickup takes frames, so this cannot be waited for from inside a frame. It is
-		        // started and left to finish on its own; Update returns straight away while one is in flight.
-		        Log.Guard("PropStreamer.Tick pickup", pickup.Update);
-		    }
+			foreach (Laser laser in Lasers)
+			{
+				if (laser.OnlyVisibleInEditor && !isInFreecam) continue;
+
+				// A draft does not burn its own author. The freecam is where the map is being built, and a
+				// laser somebody is dragging across the room would otherwise be killing them while they aim
+				// it — the same reason nothing else the editor spawns is solid until the player steps out.
+				LaserRenderer.Tick(laser, viewPosition, !isInFreecam);
+			}
 		}
 	}
 }

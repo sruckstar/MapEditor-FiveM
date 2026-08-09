@@ -69,24 +69,15 @@ namespace MapEditor
                 if (Game.IsControlJustPressed(0, Control.CreatorDelete))
                 {
                     RemoveItemFromEntityMenu(_snappedProp);
-                    if (PropStreamer.IsPickup(_snappedProp.Handle))
-                    {
-                        PropStreamer.RemovePickup(_snappedProp.Handle);
-                    }
-                    else
-                    {
-                        PropStreamer.RemoveEntity(_snappedProp.Handle);
-                        if (PropStreamer.Identifications.ContainsKey(_snappedProp.Handle))
-                            PropStreamer.Identifications.Remove(_snappedProp.Handle);
-                    }
+                    PropStreamer.RemoveEntity(_snappedProp.Handle);
+                    if (PropStreamer.Identifications.ContainsKey(_snappedProp.Handle))
+                        PropStreamer.Identifications.Remove(_snappedProp.Handle);
                     _snappedProp = null;
                     _changesMade++;
                 }
 
                 if (_snappedProp != null && Game.IsControlJustPressed(0, Control.Attack))
                 {
-                    if (PropStreamer.IsPickup(_snappedProp.Handle))
-                        PropStreamer.GetPickup(_snappedProp.Handle).UpdatePos();
                     _snappedProp = null;
                     _changesMade++;
                 }
@@ -114,6 +105,35 @@ namespace MapEditor
                 if (Game.IsControlJustPressed(0, Control.Attack))
                 {
                     _snappedMarker = null;
+                    _changesMade++;
+                }
+
+                DrawButtons(_snappedButtons);
+            }
+            else if (_snappedLaser != null)
+            {
+                // A laser is carried a metre above whatever the crosshair finds, the same offset it was put
+                // down at: a grating dropped flush onto the floor is one nobody can walk into.
+                _snappedLaser.Position = VectorExtensions.RaycastEverything(new Vector2(0f, 0f),
+                    _mainCamera.Position, _mainCamera.Rotation, Game.Player.Character) + new Vector3(0f, 0f, 1f);
+
+                if (Game.IsControlPressed(0, Control.CursorScrollUp) || Game.IsControlPressed(0, Control.FrontendRb))
+                    _snappedLaser.Rotation = _snappedLaser.Rotation - new Vector3(0f, 0f, modifier);
+
+                if (Game.IsControlPressed(0, Control.CursorScrollDown) || Game.IsControlPressed(0, Control.FrontendLb))
+                    _snappedLaser.Rotation = _snappedLaser.Rotation + new Vector3(0f, 0f, modifier);
+
+                if (Game.IsControlJustPressed(0, Control.CreatorDelete))
+                {
+                    RemoveLaserFromEntityMenu(_snappedLaser.Id);
+                    PropStreamer.Lasers.Remove(_snappedLaser);
+                    _snappedLaser = null;
+                    _changesMade++;
+                }
+
+                if (Game.IsControlJustPressed(0, Control.Attack))
+                {
+                    _snappedLaser = null;
                     _changesMade++;
                 }
 
@@ -155,6 +175,17 @@ namespace MapEditor
                             _snappedMarker = mark;
                             _changesMade++;
                         }
+                        else
+                        {
+                            // Markers first and lasers after, because a marker is the smaller of the two and
+                            // is the thing more likely to be underneath one.
+                            Laser laser = LaserNear(pos);
+                            if (laser != null && CanTouch(laser))
+                            {
+                                _snappedLaser = laser;
+                                _changesMade++;
+                            }
+                        }
                     }
                 }
 
@@ -193,6 +224,18 @@ namespace MapEditor
                             SetMenuVisible(_objectInfoMenu, true);
                             _changesMade++;
                         }
+                        else
+                        {
+                            Laser laser = LaserNear(pos);
+                            if (laser != null && CanTouch(laser))
+                            {
+                                _selectedLaser = laser;
+                                RedrawObjectInfoMenu(_selectedLaser, true);
+                                CloseAllMenus();
+                                SetMenuVisible(_objectInfoMenu, true);
+                                _changesMade++;
+                            }
+                        }
                     }
                 }
 
@@ -225,6 +268,18 @@ namespace MapEditor
                             PropStreamer.Markers.Add(tmpMark);
                             _snappedMarker = tmpMark;
                             _changesMade++;
+                        }
+                        else
+                        {
+                            Laser laser = LaserNear(pos);
+                            if (laser != null)
+                            {
+                                var tmpLaser = CloneLaser(laser);
+                                AddItemToEntityMenu(tmpLaser);
+                                PropStreamer.Lasers.Add(tmpLaser);
+                                _snappedLaser = tmpLaser;
+                                _changesMade++;
+                            }
                         }
                     }
                 }
@@ -286,6 +341,16 @@ namespace MapEditor
                             RemoveMarkerFromEntityMenu(mark.Id);
                             _changesMade++;
                         }
+                        else
+                        {
+                            Laser laser = LaserNear(pos);
+                            if (laser != null && CanTouch(laser))
+                            {
+                                PropStreamer.Lasers.Remove(laser);
+                                RemoveLaserFromEntityMenu(laser.Id);
+                                _changesMade++;
+                            }
+                        }
                     }
                 }
 
@@ -323,6 +388,72 @@ namespace MapEditor
         }
 
         /// <summary>
+        /// The laser nearest the point the crosshair found, or null if none is close enough.
+        ///
+        /// Its <see cref="Laser.Position"/> is what is measured against, not its beams: the beams are drawn
+        /// where the numbers say and nothing in the world can be aimed at, so the handle a builder grabs a
+        /// laser by has to be the middle of it. Two metres, the same reach markers are picked up from.
+        /// </summary>
+        private static Laser LaserNear(Vector3 point)
+        {
+            Laser nearest = null;
+            var best = 2f;
+
+            foreach (var laser in PropStreamer.Lasers)
+            {
+                var distance = (laser.Position - point).Length();
+                if (distance >= best) continue;
+
+                best = distance;
+                nearest = laser;
+            }
+
+            return nearest;
+        }
+
+        /// <summary>
+        /// A copy of a laser, under a name of its own. Everything the builder authored is carried across;
+        /// what is not is the session id and the burn in progress, both of which belong to the original.
+        /// </summary>
+        private Laser CloneLaser(Laser laser)
+        {
+            _laserCounter++;
+
+            var copy = new Laser
+            {
+                Pattern = laser.Pattern,
+                Position = laser.Position,
+                Rotation = laser.Rotation,
+                BeamLength = laser.BeamLength,
+                Width = laser.Width,
+                Height = laser.Height,
+                BeamCount = laser.BeamCount,
+                Density = laser.Density,
+                Thickness = laser.Thickness,
+                Red = laser.Red,
+                Green = laser.Green,
+                Blue = laser.Blue,
+                Alpha = laser.Alpha,
+                Textured = laser.Textured,
+                Rhythm = laser.Rhythm,
+                OnSeconds = laser.OnSeconds,
+                OffSeconds = laser.OffSeconds,
+                ChasePeriod = laser.ChasePeriod,
+                ChaseOnFraction = laser.ChaseOnFraction,
+                Amplitude = laser.Amplitude,
+                Frequency = laser.Frequency,
+                Speed = laser.Speed,
+                DealsDamage = laser.DealsDamage,
+                DamagePerSecond = laser.DamagePerSecond,
+                ActivationRange = laser.ActivationRange,
+                HitRadius = laser.HitRadius,
+                OnlyVisibleInEditor = laser.OnlyVisibleInEditor,
+                Id = _laserCounter,
+            };
+            return copy;
+        }
+
+        /// <summary>
         /// Duplicates an entity in place and returns the copy, or null if it could not be created.
         ///
         /// Asynchronous where the SP build's was not: every spawn here goes through PropStreamer, which has
@@ -331,16 +462,6 @@ namespace MapEditor
         private async Task<Entity> CopyEntity(Entity hitEnt)
         {
             if (hitEnt == null || !hitEnt.Exists()) return null;
-
-            if (PropStreamer.IsPickup(hitEnt.Handle))
-            {
-                var oldPickup = PropStreamer.GetPickup(hitEnt.Handle);
-                var oldRotation = Compat.Ent(oldPickup.ObjectHandle)?.Rotation.Z ?? 0f;
-                var newPickup = await PropStreamer.CreatePickup(oldPickup.PickupHash, oldPickup.Position,
-                    oldRotation, oldPickup.Amount, oldPickup.Dynamic);
-                AddItemToEntityMenu(newPickup);
-                return Compat.Ent(newPickup.ObjectHandle);
-            }
 
             if (IsProp(hitEnt))
             {
@@ -497,7 +618,6 @@ namespace MapEditor
                 // Not a plain "collision back on": a dynamic object was already standing there without any,
                 // and the drag is not what is supposed to decide that. See PropStreamer.HoldStill.
                 PropStreamer.HoldStill(ent);
-                SyncPickup(ent);
             }
             _multiSelectionSnapped = false;
         }
@@ -566,10 +686,7 @@ namespace MapEditor
             PropStreamer.ActiveWeapons.Remove(ent.Handle);
             PropStreamer.Doors.Remove(ent.Handle);
 
-            if (PropStreamer.IsPickup(ent.Handle))
-                PropStreamer.RemovePickup(ent.Handle);
-            else
-                PropStreamer.RemoveEntity(ent.Handle);
+            PropStreamer.RemoveEntity(ent.Handle);
         }
 
         private void DeleteMultiSelection()
@@ -634,7 +751,6 @@ namespace MapEditor
                     if (IsPed(_selectedProp))
                         _selectedProp.Heading = _selectedProp.Rotation.Z;
                 }
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -649,7 +765,6 @@ namespace MapEditor
                     if (IsPed(_selectedProp))
                         _selectedProp.Heading = _selectedProp.Rotation.Z;
                 }
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -663,7 +778,6 @@ namespace MapEditor
                 }
                 else
                     _selectedProp.Quaternion = new Vector3(_selectedProp.Rotation.X + (modifier / 4), _selectedProp.Rotation.Y, _selectedProp.Rotation.Z).ToQuaternion();
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -677,7 +791,6 @@ namespace MapEditor
                 }
                 else
                     _selectedProp.Quaternion = new Vector3(_selectedProp.Rotation.X - (modifier / 4), _selectedProp.Rotation.Y, _selectedProp.Rotation.Z).ToQuaternion();
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -691,7 +804,6 @@ namespace MapEditor
                 }
                 else
                     _selectedProp.Quaternion = new Vector3(_selectedProp.Rotation.X, _selectedProp.Rotation.Y + (modifier / 4), _selectedProp.Rotation.Z).ToQuaternion();
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -705,7 +817,6 @@ namespace MapEditor
                 }
                 else
                     _selectedProp.Quaternion = new Vector3(_selectedProp.Rotation.X, _selectedProp.Rotation.Y - (modifier / 4), _selectedProp.Rotation.Z).ToQuaternion();
-                SyncPickup(_selectedProp);
                 _changesMade++;
             }
 
@@ -754,7 +865,6 @@ namespace MapEditor
 
             if (_selectedProp != null && (Game.IsControlJustPressed(0, Control.PhoneCancel) || Game.IsControlJustPressed(0, Control.Attack)))
             {
-                SyncPickup(_selectedProp);
                 _selectedProp = null;
                 SetMenuVisible(_objectInfoMenu, false);
                 _mainCamera.StopPointing();
@@ -781,12 +891,6 @@ namespace MapEditor
                 _selectedProp.Position = target;
             else
                 _selectedProp.PositionNoOffset = target;
-        }
-
-        private static void SyncPickup(Entity ent)
-        {
-            if (ent != null && PropStreamer.IsPickup(ent.Handle))
-                PropStreamer.GetPickup(ent.Handle).UpdatePos();
         }
 
         private async Task<Entity> CopySelectedProp()
@@ -901,6 +1005,123 @@ namespace MapEditor
             if (_selectedMarker != null && (Game.IsControlJustPressed(0, Control.PhoneCancel) || Game.IsControlJustPressed(0, Control.Attack)))
             {
                 _selectedMarker = null;
+                SetMenuVisible(_objectInfoMenu, false);
+                _mainCamera.StopPointing();
+                _changesMade++;
+            }
+
+            DrawButtons(_selectedButtons);
+        }
+
+        /// <summary>
+        /// The selected laser under the same controls a selected marker has: the arrows move or turn it
+        /// depending on <c>_controlsRotate</c>, LB/RB raise and lower it, and the whole of it is one row of
+        /// numbers, so nothing has to be spawned or moved in the world for any of it to take effect.
+        /// </summary>
+        private void ProcessSelectedLaser(float modifier)
+        {
+            if (Game.IsControlJustReleased(0, Control.Duck))
+                _controlsRotate = !_controlsRotate;
+
+            if (Game.IsControlPressed(0, Control.FrontendRb))
+            {
+                if (!_controlsRotate)
+                    _selectedLaser.Position += new Vector3(0f, 0f, (modifier / 4));
+                else
+                    _selectedLaser.Rotation += new Vector3(0f, 0f, modifier);
+                _changesMade++;
+            }
+
+            if (Game.IsControlPressed(0, Control.FrontendLb))
+            {
+                if (!_controlsRotate)
+                    _selectedLaser.Position -= new Vector3(0f, 0f, (modifier / 4));
+                else
+                    _selectedLaser.Rotation -= new Vector3(0f, 0f, modifier);
+                _changesMade++;
+            }
+
+            if (Game.IsControlPressed(0, Control.MoveUpOnly))
+            {
+                if (!_controlsRotate)
+                {
+                    var dir = VectorExtensions.RotationToDirection(_mainCamera.Rotation) * (modifier / 4);
+                    _selectedLaser.Position += new Vector3(dir.X, dir.Y, 0f);
+                }
+                else
+                    _selectedLaser.Rotation += new Vector3(modifier, 0f, 0f);
+                _changesMade++;
+            }
+
+            if (Game.IsControlPressed(0, Control.MoveDownOnly))
+            {
+                if (!_controlsRotate)
+                {
+                    var dir = VectorExtensions.RotationToDirection(_mainCamera.Rotation) * (modifier / 4);
+                    _selectedLaser.Position -= new Vector3(dir.X, dir.Y, 0f);
+                }
+                else
+                    _selectedLaser.Rotation -= new Vector3(modifier, 0f, 0f);
+                _changesMade++;
+            }
+
+            if (Game.IsControlPressed(0, Control.MoveLeftOnly))
+            {
+                if (!_controlsRotate)
+                {
+                    var right = CameraRight(modifier);
+                    _selectedLaser.Position += new Vector3(right.X, right.Y, 0f);
+                }
+                else
+                    _selectedLaser.Rotation += new Vector3(0f, modifier, 0f);
+                _changesMade++;
+            }
+
+            if (Game.IsControlPressed(0, Control.MoveRightOnly))
+            {
+                if (!_controlsRotate)
+                {
+                    var right = CameraRight(modifier);
+                    _selectedLaser.Position -= new Vector3(right.X, right.Y, 0f);
+                }
+                else
+                    _selectedLaser.Rotation -= new Vector3(0f, modifier, 0f);
+                _changesMade++;
+            }
+
+            if (Game.IsControlJustReleased(0, Control.MoveLeftOnly) ||
+                Game.IsControlJustReleased(0, Control.MoveRightOnly) ||
+                Game.IsControlJustReleased(0, Control.MoveUpOnly) ||
+                Game.IsControlJustReleased(0, Control.MoveDownOnly) ||
+                Game.IsControlJustReleased(0, Control.FrontendLb) ||
+                Game.IsControlJustReleased(0, Control.FrontendRb))
+            {
+                RedrawObjectInfoMenu(_selectedLaser, false);
+            }
+
+            if (Game.IsControlJustReleased(0, Control.LookBehind))
+            {
+                var tmpLaser = CloneLaser(_selectedLaser);
+                PropStreamer.Lasers.Add(tmpLaser);
+                AddItemToEntityMenu(tmpLaser);
+                _selectedLaser = tmpLaser;
+                RedrawObjectInfoMenu(_selectedLaser, true);
+                _changesMade++;
+            }
+
+            if (Game.IsControlJustPressed(0, Control.CreatorDelete))
+            {
+                PropStreamer.Lasers.Remove(_selectedLaser);
+                RemoveLaserFromEntityMenu(_selectedLaser.Id);
+                _selectedLaser = null;
+                SetMenuVisible(_objectInfoMenu, false);
+                _mainCamera.StopPointing();
+                _changesMade++;
+            }
+
+            if (_selectedLaser != null && (Game.IsControlJustPressed(0, Control.PhoneCancel) || Game.IsControlJustPressed(0, Control.Attack)))
+            {
+                _selectedLaser = null;
                 SetMenuVisible(_objectInfoMenu, false);
                 _mainCamera.StopPointing();
                 _changesMade++;

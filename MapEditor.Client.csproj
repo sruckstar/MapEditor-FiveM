@@ -123,6 +123,8 @@
     <Compile Include="Client\Quaternion.cs" />
     <Compile Include="Client\VectorExtensions.cs" />
     <Compile Include="Client\Marker.cs" />
+    <Compile Include="Client\Laser.cs" />
+    <Compile Include="Client\LaserRenderer.cs" />
     <Compile Include="Client\Map.cs" />
     <Compile Include="Client\MapObject.cs" />
     <Compile Include="Client\CrosshairType.cs" />

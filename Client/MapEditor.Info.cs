@@ -212,9 +212,7 @@ namespace MapEditor
 
             _objectInfoMenu.Add(dynamic);
 
-            // Not offered for a pickup: "who took it" is shared state whatever anybody ticks, and no
-            // server-side native creates one, so a published map does not place them. See Server/LiveEntities.cs.
-            if (!PropStreamer.IsPickup(ent.Handle)) _objectInfoMenu.Add(SharedItem(ent));
+            _objectInfoMenu.Add(SharedItem(ent));
 
             _objectInfoMenu.Add(ident);
 
@@ -363,62 +361,6 @@ namespace MapEditor
                 }
             }
 
-            if (PropStreamer.IsPickup(ent.Handle))
-            {
-                var pickup = PropStreamer.GetPickup(ent.Handle);
-
-                var amountList = new NativeItem(Translation.Translate("Amount"));
-                amountList.AltTitle = pickup.Amount.ToString();
-                amountList.Activated += (sender, item) => Run("Pickup amount", async () =>
-                {
-                    string playerInput = await Compat.GetUserInput(10);
-                    int newValue;
-                    if (!int.TryParse(playerInput, out newValue) || newValue < -1)
-                    {
-                        Compat.Notify("~r~~h~Map Editor~h~~n~~w~" + Translation.Translate("Input was not in the correct format."));
-                        return;
-                    }
-                    // Changing a pickup re-creates it, which waits for the new object to appear.
-                    await pickup.SetAmount(newValue);
-                    amountList.AltTitle = pickup.Amount.ToString();
-                    _selectedProp = Compat.Ent(pickup.ObjectHandle);
-                    if (_settings.SnapCameraToSelectedObject && _selectedProp != null)
-                        _mainCamera.PointAt(_selectedProp, Vector3.Zero);
-                });
-                _objectInfoMenu.Add(amountList);
-
-                var pickupTypesList = Enum.GetValues(typeof(ObjectDatabase.PickupHash)).Cast<ObjectDatabase.PickupHash>().ToList();
-                var itemIndex = pickupTypesList.IndexOf((ObjectDatabase.PickupHash)pickup.PickupHash);
-
-                var pickupTypeItem = new NativeListItem<string>("Type", pickupTypesList.Select(s => s.ToString()).ToArray())
-                {
-                    SelectedIndex = ClampIndex(itemIndex, pickupTypesList.Count),
-                };
-                pickupTypeItem.ItemChanged += (sender, e) => Run("Pickup type", async () =>
-                {
-                    await pickup.SetPickupHash((int)pickupTypesList[e.Index]);
-                    _selectedProp = Compat.Ent(pickup.ObjectHandle);
-                    if (_settings.SnapCameraToSelectedObject && _selectedProp != null)
-                        _mainCamera.PointAt(_selectedProp, Vector3.Zero);
-                });
-                _objectInfoMenu.Add(pickupTypeItem);
-
-                var timeoutTime = new NativeItem("Regeneration Time");
-                timeoutTime.AltTitle = pickup.Timeout.ToString();
-                timeoutTime.Activated += (sender, item) => Run("Pickup regeneration", async () =>
-                {
-                    string playerInput = await Compat.GetUserInput(10);
-                    int newValue;
-                    if (!int.TryParse(playerInput, out newValue) || newValue < 0)
-                    {
-                        Compat.Notify("~r~~h~Map Editor~h~~n~~w~" + Translation.Translate("Input was not in the correct format."));
-                        return;
-                    }
-                    pickup.Timeout = newValue;
-                    timeoutTime.AltTitle = newValue.ToString();
-                });
-                _objectInfoMenu.Add(timeoutTime);
-            }
 
             if (refreshIndex && _objectInfoMenu.Items.Count > 0)
                 _objectInfoMenu.SelectedIndex = 0;
@@ -431,7 +373,6 @@ namespace MapEditor
             else
                 ent.PositionNoOffset = pos;
 
-            SyncPickup(ent);
             _changesMade++;
         }
 
@@ -643,6 +584,265 @@ namespace MapEditor
             _objectInfoMenu.Add(loadPointItem);
             _objectInfoMenu.Add(loadTeleportItem);
             _objectInfoMenu.Add(visiblityItem);
+
+            if (refreshIndex && _objectInfoMenu.Items.Count > 0)
+                _objectInfoMenu.SelectedIndex = 0;
+        }
+
+        public void SetLaserVector(Laser laser, Vector3 v)
+        {
+            laser.Position = v;
+            RedrawObjectInfoMenu(laser, false);
+        }
+
+        public void SetLaserRotation(Laser laser, Vector3 v)
+        {
+            laser.Rotation = v;
+            RedrawObjectInfoMenu(laser, false);
+        }
+
+        /// <summary>
+        /// Everything a laser has, in one menu.
+        ///
+        /// The order is the order somebody builds one in: what shape it is, where it is, how big, how many
+        /// beams and how thickly packed, what colour, what it does over time, and only then whether it hurts.
+        /// The rows that belong to one pattern — a wall's height, a wave's amplitude — are still shown for
+        /// the others rather than hidden, because the menu is rebuilt from scratch on every change and a row
+        /// that appears and disappears under the cursor moves everything below it while it is being read.
+        /// What each field means is <see cref="Laser"/>'s business, not this menu's.
+        /// </summary>
+        private void RedrawObjectInfoMenu(Laser laser, bool refreshIndex)
+        {
+            if (laser == null) return;
+
+            _objectInfoMenu.Name = "~b~" + Translation.Translate("LASER") + " " + laser.Pattern + " #" + laser.Id;
+            _objectInfoMenu.Clear();
+
+            var patternNames = Enum.GetNames(typeof(LaserPattern));
+            var pattern = new NativeListItem<string>(Translation.Translate("Pattern"), patternNames)
+            {
+                SelectedIndex = ClampIndex(patternNames.ToList().IndexOf(laser.Pattern.ToString()), patternNames.Length),
+                Description = Translation.Translate(
+                    "Grid is a rake of parallel beams, Wall stacks them from the floor up, Wave ripples them " +
+                    "along a sine that scrolls, Single is one tripwire."),
+            };
+            pattern.ItemChanged += (sender, e) =>
+            {
+                LaserPattern parsed;
+                if (!Enum.TryParse(e.Object, out parsed)) return;
+                laser.Pattern = parsed;
+                _objectInfoMenu.Name = "~b~" + Translation.Translate("LASER") + " " + laser.Pattern + " #" + laser.Id;
+            };
+
+            var posXitem = NumberItem(Translation.Translate("Position X"), laser.Position.X,
+                v => laser.Position = new Vector3(v, laser.Position.Y, laser.Position.Z), ScrollStep, PositionMin, PositionMax);
+            var posYitem = NumberItem(Translation.Translate("Position Y"), laser.Position.Y,
+                v => laser.Position = new Vector3(laser.Position.X, v, laser.Position.Z), ScrollStep, PositionMin, PositionMax);
+            var posZitem = NumberItem(Translation.Translate("Position Z"), laser.Position.Z,
+                v => laser.Position = new Vector3(laser.Position.X, laser.Position.Y, v), ScrollStep, PositionMin, PositionMax);
+
+            // Pitch/Roll/Yaw onto Rotation X/Y/Z, the order LaserRenderer.Axes reads them in.
+            var rotXitem = NumberItem(Translation.Translate("Pitch"), laser.Rotation.X,
+                v => laser.Rotation = new Vector3(v, laser.Rotation.Y, laser.Rotation.Z), ScrollStep, -360f, 360f);
+            var rotYitem = NumberItem(Translation.Translate("Roll"), laser.Rotation.Y,
+                v => laser.Rotation = new Vector3(laser.Rotation.X, v, laser.Rotation.Z), ScrollStep, -360f, 360f);
+            var rotZitem = NumberItem(Translation.Translate("Yaw"), laser.Rotation.Z,
+                v => laser.Rotation = new Vector3(laser.Rotation.X, laser.Rotation.Y, v), ScrollStep, -360f, 360f);
+
+            posXitem.Activated += (sender, item) => Run("Laser position X", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Position.X.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserVector(laser, new Vector3(GetSafeFloat(typed, laser.Position.X), laser.Position.Y, laser.Position.Z));
+            });
+            posYitem.Activated += (sender, item) => Run("Laser position Y", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Position.Y.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserVector(laser, new Vector3(laser.Position.X, GetSafeFloat(typed, laser.Position.Y), laser.Position.Z));
+            });
+            posZitem.Activated += (sender, item) => Run("Laser position Z", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Position.Z.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserVector(laser, new Vector3(laser.Position.X, laser.Position.Y, GetSafeFloat(typed, laser.Position.Z)));
+            });
+
+            rotXitem.Activated += (sender, item) => Run("Laser pitch", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Rotation.X.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserRotation(laser, new Vector3(GetSafeFloat(typed, laser.Rotation.X), laser.Rotation.Y, laser.Rotation.Z));
+            });
+            rotYitem.Activated += (sender, item) => Run("Laser roll", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Rotation.Y.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserRotation(laser, new Vector3(laser.Rotation.X, GetSafeFloat(typed, laser.Rotation.Y), laser.Rotation.Z));
+            });
+            rotZitem.Activated += (sender, item) => Run("Laser yaw", async () =>
+            {
+                var typed = await Compat.GetUserInput(laser.Rotation.Z.ToString(CultureInfo.InvariantCulture), 10);
+                SetLaserRotation(laser, new Vector3(laser.Rotation.X, laser.Rotation.Y, GetSafeFloat(typed, laser.Rotation.Z)));
+            });
+
+            // --- Size ---------------------------------------------------------------------------
+
+            var lengthItem = NumberItem(Translation.Translate("Beam Length"), laser.BeamLength,
+                v => laser.BeamLength = v, 0.1f, 0.1f, 200f);
+            lengthItem.Description = Translation.Translate("How long each beam is, in metres.");
+
+            var widthItem = NumberItem(Translation.Translate("Spread Width"), laser.Width,
+                v => laser.Width = v, 0.1f, 0f, 200f);
+            widthItem.Description = Translation.Translate(
+                "How far across the beams are fanned out. Grid and Wave only.");
+
+            var heightItem = NumberItem(Translation.Translate("Wall Height"), laser.Height,
+                v => laser.Height = v, 0.1f, 0f, 100f);
+            heightItem.Description = Translation.Translate(
+                "How far up a Wall stacks its rows, in metres.");
+
+            var thicknessItem = NumberItem(Translation.Translate("Beam Thickness"), laser.Thickness,
+                v => laser.Thickness = v, 0.005f, 0.001f, 1f);
+            thicknessItem.Description = Translation.Translate(
+                "How thick the beams are drawn. Does not change what they catch.");
+
+            // --- Count and density --------------------------------------------------------------
+
+            var countItem = new NativeDynamicItem<int>(Translation.Translate("Beam Count"), laser.BeamCount);
+            countItem.ItemChanged += (sender, e) =>
+            {
+                var value = e.Object + (e.Direction == Direction.Left ? -1 : 1);
+                if (value < 1) value = 1;
+                if (value > 200) value = 200;
+                laser.BeamCount = value;
+                e.Object = value;
+            };
+            countItem.Description = Translation.Translate("Beams before the density level scales them.");
+
+            var densityNames = Enum.GetNames(typeof(LaserDensity));
+            var densityItem = new NativeListItem<string>(Translation.Translate("Density"), densityNames)
+            {
+                SelectedIndex = ClampIndex(densityNames.ToList().IndexOf(laser.Density.ToString()), densityNames.Length),
+                Description = Translation.Translate(
+                    "One knob for three: how many beams there are, how tightly they are packed and how hard " +
+                    "they burn."),
+            };
+            densityItem.ItemChanged += (sender, e) =>
+            {
+                LaserDensity parsed;
+                if (Enum.TryParse(e.Object, out parsed)) laser.Density = parsed;
+            };
+
+            // --- Colour -------------------------------------------------------------------------
+
+            var possibleColors = Enumerable.Range(0, 256).ToArray();
+
+            var colorR = new NativeListItem<int>(Translation.Translate("Red Color"), possibleColors) { SelectedIndex = ClampIndex(laser.Red, 256) };
+            var colorG = new NativeListItem<int>(Translation.Translate("Green Color"), possibleColors) { SelectedIndex = ClampIndex(laser.Green, 256) };
+            var colorB = new NativeListItem<int>(Translation.Translate("Blue Color"), possibleColors) { SelectedIndex = ClampIndex(laser.Blue, 256) };
+            var colorA = new NativeListItem<int>(Translation.Translate("Transparency"), possibleColors) { SelectedIndex = ClampIndex(laser.Alpha, 256) };
+
+            colorR.ItemChanged += (item, e) => laser.Red = e.Object;
+            colorG.ItemChanged += (item, e) => laser.Green = e.Object;
+            colorB.ItemChanged += (item, e) => laser.Blue = e.Object;
+            colorA.ItemChanged += (item, e) => laser.Alpha = e.Object;
+
+            var texturedItem = new NativeCheckboxItem(Translation.Translate("Glowing Beams"),
+                Translation.Translate(
+                    "Draw the beams as the game's own textured, glowing ribbons. Off falls back to flat " +
+                    "polygons, which need nothing streamed in."),
+                laser.Textured);
+            texturedItem.CheckboxChanged += (sender, e) => laser.Textured = texturedItem.Checked;
+
+            // --- Rhythm -------------------------------------------------------------------------
+
+            var rhythmNames = Enum.GetNames(typeof(LaserRhythm));
+            var rhythmItem = new NativeListItem<string>(Translation.Translate("Rhythm"), rhythmNames)
+            {
+                SelectedIndex = ClampIndex(rhythmNames.ToList().IndexOf(laser.Rhythm.ToString()), rhythmNames.Length),
+                Description = Translation.Translate(
+                    "Steady is always on, Blink turns the whole laser on and off, Chase runs a gap along the " +
+                    "beams for somebody to time."),
+            };
+            rhythmItem.ItemChanged += (sender, e) =>
+            {
+                LaserRhythm parsed;
+                if (Enum.TryParse(e.Object, out parsed)) laser.Rhythm = parsed;
+            };
+
+            var onItem = NumberItem(Translation.Translate("Blink: Seconds On"), laser.OnSeconds,
+                v => laser.OnSeconds = v, 0.1f, 0f, 60f);
+            var offItem = NumberItem(Translation.Translate("Blink: Seconds Off"), laser.OffSeconds,
+                v => laser.OffSeconds = v, 0.1f, 0f, 60f);
+
+            var chasePeriodItem = NumberItem(Translation.Translate("Chase: Seconds Per Pass"), laser.ChasePeriod,
+                v => laser.ChasePeriod = v, 0.1f, 0.1f, 60f);
+            var chaseFractionItem = NumberItem(Translation.Translate("Chase: Fraction Lit"), laser.ChaseOnFraction,
+                v => laser.ChaseOnFraction = v, 0.05f, 0f, 1f);
+
+            var amplitudeItem = NumberItem(Translation.Translate("Wave: Amplitude"), laser.Amplitude,
+                v => laser.Amplitude = v, 0.1f, 0f, 50f);
+            var frequencyItem = NumberItem(Translation.Translate("Wave: Frequency"), laser.Frequency,
+                v => laser.Frequency = v, 0.05f, 0f, 20f);
+            var speedItem = NumberItem(Translation.Translate("Wave: Speed"), laser.Speed,
+                v => laser.Speed = v, 0.1f, -20f, 20f);
+
+            // --- Damage -------------------------------------------------------------------------
+
+            var damageItem = new NativeCheckboxItem(Translation.Translate("Deals Damage"),
+                Translation.Translate(
+                    "Off makes the laser a tripwire: it still draws and still catches the player, but nobody " +
+                    "gets hurt."),
+                laser.DealsDamage);
+            damageItem.CheckboxChanged += (sender, e) => laser.DealsDamage = damageItem.Checked;
+
+            var dpsItem = NumberItem(Translation.Translate("Damage Per Second"), laser.DamagePerSecond,
+                v => laser.DamagePerSecond = v, 5f, 0f, 5000f);
+            dpsItem.Description = Translation.Translate(
+                "Before the density multiplier, and multiplied again by how many beams are on the player. " +
+                "250 is what the game's own laser grid uses.");
+
+            var hitRadiusItem = NumberItem(Translation.Translate("Hit Radius"), laser.HitRadius,
+                v => laser.HitRadius = v, 0.05f, 0.01f, 5f);
+            hitRadiusItem.Description = Translation.Translate(
+                "How near a beam has to pass the middle of somebody to catch them, in metres.");
+
+            var rangeItem = NumberItem(Translation.Translate("Activation Range"), laser.ActivationRange,
+                v => laser.ActivationRange = v, 5f, 0f, 500f);
+            rangeItem.Description = Translation.Translate(
+                "How near the player has to be for the laser to be drawn and tested at all. Zero is always.");
+
+            var visibilityItem = new NativeCheckboxItem(Translation.Translate("Only Visible In Editor"),
+                laser.OnlyVisibleInEditor);
+            visibilityItem.CheckboxChanged += (sender, e) => laser.OnlyVisibleInEditor = visibilityItem.Checked;
+
+            _objectInfoMenu.Add(pattern);
+            _objectInfoMenu.Add(posXitem);
+            _objectInfoMenu.Add(posYitem);
+            _objectInfoMenu.Add(posZitem);
+            _objectInfoMenu.Add(rotXitem);
+            _objectInfoMenu.Add(rotYitem);
+            _objectInfoMenu.Add(rotZitem);
+            _objectInfoMenu.Add(lengthItem);
+            _objectInfoMenu.Add(widthItem);
+            _objectInfoMenu.Add(heightItem);
+            _objectInfoMenu.Add(countItem);
+            _objectInfoMenu.Add(densityItem);
+            _objectInfoMenu.Add(thicknessItem);
+            _objectInfoMenu.Add(colorR);
+            _objectInfoMenu.Add(colorG);
+            _objectInfoMenu.Add(colorB);
+            _objectInfoMenu.Add(colorA);
+            _objectInfoMenu.Add(texturedItem);
+            _objectInfoMenu.Add(rhythmItem);
+            _objectInfoMenu.Add(onItem);
+            _objectInfoMenu.Add(offItem);
+            _objectInfoMenu.Add(chasePeriodItem);
+            _objectInfoMenu.Add(chaseFractionItem);
+            _objectInfoMenu.Add(amplitudeItem);
+            _objectInfoMenu.Add(frequencyItem);
+            _objectInfoMenu.Add(speedItem);
+            _objectInfoMenu.Add(damageItem);
+            _objectInfoMenu.Add(dpsItem);
+            _objectInfoMenu.Add(hitRadiusItem);
+            _objectInfoMenu.Add(rangeItem);
+            _objectInfoMenu.Add(visibilityItem);
 
             if (refreshIndex && _objectInfoMenu.Items.Count > 0)
                 _objectInfoMenu.SelectedIndex = 0;

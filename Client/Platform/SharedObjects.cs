@@ -24,7 +24,9 @@ namespace MapEditor.Platform
     ///       it replicates; the car does not, so everyone else watches a player sit down in mid-air. This is
     ///       why the default is the server, and why the author who unchecks it gets a locked, undriveable
     ///       car rather than an open one.</item>
-    /// <item>A pickup is shared state by definition — "who took it" has no other answer.</item>
+    /// <item>A laser is a marker with arithmetic behind it: every client draws the same beams from the same
+    ///       numbers off the same clock, and the damage each of them deals is dealt to their own player,
+    ///       which is the only place that answer could come from. Local, always.</item>
     /// </list>
     ///
     /// <b>Why the author gets a say.</b> The rule below cannot know that two hundred crates were made
@@ -63,11 +65,9 @@ namespace MapEditor.Platform
             switch (Normalize(type))
             {
                 case "marker":
+                case "laser":
                     // Drawn from the document every frame; there is no entity for anyone to disagree about.
                     return false;
-
-                case "pickup":
-                    return true;
 
                 case "vehicle":
                     return true;

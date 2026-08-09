@@ -9,6 +9,15 @@ namespace MapEditor
         public List<MapObject> Objects = new List<MapObject>();
         public List<MapObject> RemoveFromWorld = new List<MapObject>();
         public List<Marker> Markers = new List<Marker>();
+
+        /// <summary>
+        /// The lasers of the map. A list of their own rather than entries in <see cref="Objects"/>, for the
+        /// reason markers have one: neither is an entity with a model and a handle, and the fields that
+        /// describe a beam array have nothing in common with the ones that describe a prop. See
+        /// <see cref="Laser"/>.
+        /// </summary>
+        public List<Laser> Lasers = new List<Laser>();
+
 	    public MapMetadata Metadata;
 	}
 

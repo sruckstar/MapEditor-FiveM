@@ -33,7 +33,7 @@ namespace MapEditor
                 new InstructionalButton(Translation.Translate("Spawn Ped"), Control.FrontendPause),
                 new InstructionalButton(Translation.Translate("Spawn Vehicle"), Control.NextCamera),
                 new InstructionalButton(Translation.Translate("Spawn Marker"), Control.Phone),
-                new InstructionalButton(Translation.Translate("Spawn Pickup"), Control.ThrowGrenade),
+                new InstructionalButton(Translation.Translate("Spawn Laser"), Control.ThrowGrenade),
                 new InstructionalButton(Translation.Translate("Move Entity"), Control.Aim),
                 new InstructionalButton(Translation.Translate("Select Entity"), Control.Attack),
                 // Control.Duck is the LCTRL binding on keyboard, which is what IsMultiSelectKeyDown() reads.
@@ -161,8 +161,19 @@ namespace MapEditor
 			}
 
 			_menuPool.Process();
-			PropStreamer.Tick(IsInFreecam);
+
+			// Whichever camera is rendering, for the beams that have to be billboarded at it. Taken once and
+			// shared, because the maps standing in the world are drawn from the same eye as the one being
+			// edited and neither of them can reach the freecam.
+			ViewPosition = IsInFreecam && _mainCamera != null ? _mainCamera.Position : GameplayCamera.Position;
+
+			// The lasers of the map being edited and of every published map draw inside one bracket: the
+			// additive blend state and the frame's beam ceiling are the renderer's, not any one map's.
+			LaserRenderer.BeginFrame();
+			PropStreamer.Tick(IsInFreecam, ViewPosition);
 			AutoloadedMaps.Tick();
+			LaserRenderer.EndFrame();
+
 			ProcessSmartStreaming();
 			WarmObjectRows();
 
@@ -173,7 +184,7 @@ namespace MapEditor
 			ProcessCollab();
 			DrawCollabFeed();
 
-			if (PropStreamer.EntityCount > 0 || PropStreamer.RemovedObjects.Count > 0 || PropStreamer.Markers.Count > 0 || PropStreamer.Pickups.Count > 0)
+			if (PropStreamer.EntityCount > 0 || PropStreamer.RemovedObjects.Count > 0 || PropStreamer.Markers.Count > 0 || PropStreamer.Lasers.Count > 0)
 			{
 				_currentEntitiesItem.Enabled = true;
 				_currentEntitiesItem.Description = "";
@@ -332,20 +343,34 @@ namespace MapEditor
                 _selectedProp = null;
                 _snappedMarker = null;
                 _selectedMarker = null;
+                _snappedLaser = null;
+                _selectedLaser = null;
 
                 var at = VectorExtensions.RaycastEverything(new Vector2(0f, 0f), _mainCamera.Position,
                     _mainCamera.Rotation, Game.Player.Character);
 
-                // Spawning waits for a model and for the pickup's own object to appear, so not in the frame.
-                Run("Spawn pickup", async () =>
-                {
-                    var pickup = await PropStreamer.CreatePickup((int) ObjectDatabase.PickupHash.Parachute, at, 0f, 100, false);
-                    if (pickup == null) return;
+                // Counted up before the id is taken, not after, so that a laser put down after a map was
+                // loaded cannot be given the name of the last laser in it.
+                _laserCounter++;
 
-                    _changesMade++;
-                    AddItemToEntityMenu(pickup);
-                    _snappedProp = Compat.Ent(pickup.ObjectHandle);
-                });
+                // Nothing to load and nothing to wait for: a laser is a row of numbers, so unlike every other
+                // spawn in this file it happens inside the frame it was asked for. See Laser.
+                var tmpLaser = new Laser
+                {
+                    // Put down a metre off the surface the crosshair found rather than on it, because the
+                    // grating a builder is aiming at a floor is meant to be crossed rather than lain on.
+                    Position = at + new Vector3(0f, 0f, 1f),
+
+                    // Facing away from the camera, so the first thing they see is a grating across the room
+                    // they are looking down rather than one edge-on and invisible.
+                    Rotation = new Vector3(0f, 0f, _mainCamera.Rotation.Z),
+                    Id = _laserCounter,
+                };
+
+                PropStreamer.Lasers.Add(tmpLaser);
+                _snappedLaser = tmpLaser;
+                _changesMade++;
+                AddItemToEntityMenu(tmpLaser);
             }
 
             if (_isChoosingObject)
@@ -434,7 +459,7 @@ namespace MapEditor
 			{
 			    ProcessLooping();
 			}
-			else if (_selectedProp == null && _selectedMarker == null)
+			else if (_selectedProp == null && _selectedMarker == null && _selectedLaser == null)
 			{
 			    ProcessFreelook(hitEnt, mouseX, mouseY, movementModifier, modifier);
 			}
@@ -445,6 +470,10 @@ namespace MapEditor
 			else if (_selectedMarker != null)
 			{
 			    ProcessSelectedMarker(modifier);
+			}
+			else
+			{
+			    ProcessSelectedLaser(modifier);
 			}
 
 			return Task.FromResult(0);
@@ -655,7 +684,7 @@ namespace MapEditor
                 }.Draw();
             }
 
-            Row(5, Translation.Translate("PICKUPS"), PropStreamer.Pickups.Count.ToString());
+            Row(5, Translation.Translate("LASERS"), PropStreamer.Lasers.Count.ToString());
             Row(4, Translation.Translate("MARKERS"), PropStreamer.Markers.Count.ToString());
             Row(3, Translation.Translate("WORLD"), PropStreamer.RemovedObjects.Count.ToString());
             // The map's own count, not the world's: what streaming has taken out is still part of the map,
