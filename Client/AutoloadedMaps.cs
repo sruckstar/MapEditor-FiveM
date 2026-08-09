@@ -536,9 +536,18 @@ namespace MapEditor
 			{
 				if (marker.OnlyVisibleInEditor && !MapEditor.IsInFreecam) continue;
 
-				World.DrawMarker(marker.Type, marker.Position, Vector3.Zero, marker.Rotation, marker.Scale,
-					System.Drawing.Color.FromArgb(marker.Alpha, marker.Red, marker.Green, marker.Blue),
-					marker.BobUpAndDown, marker.RotateToCamera, false, null, null, false);
+				// Called as a raw native, the way PropStreamer draws the editor's own markers, and not
+				// through World.DrawMarker: that wrapper's last two parameters are the texture dictionary
+				// and name, and it hands them to NativeApi.PushArg as they are. PushArg picks its branch by
+				// isinst on the boxed value, so a null string matches nothing and comes out of the bottom as
+				// "Unsupported type String" — a thrown frame every tick, for the whole of any published map
+				// that has a marker in it. Passing 0 for the two texture slots is what "no texture" is at
+				// this level anyway.
+				Function.Call(Hash.DRAW_MARKER, (int) marker.Type, marker.Position.X, marker.Position.Y, marker.Position.Z,
+					0f, 0f, 0f, marker.Rotation.X, marker.Rotation.Y, marker.Rotation.Z,
+					marker.Scale.X, marker.Scale.Y, marker.Scale.Z,
+					marker.Red, marker.Green, marker.Blue, marker.Alpha,
+					marker.BobUpAndDown, marker.RotateToCamera, 2, false, false, false, false);
 			}
 
 			TickTeleports();
