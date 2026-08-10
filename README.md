@@ -42,7 +42,7 @@ Map Editor is distributed for free, and the project's source code is available o
 
 1. Copy the `resource/` folder to the server’s `resources/` directory under the name `mapeditor`.
 2. Add `ensure mapeditor` to `server.cfg`.
-3. **Start the server with OneSync**—the editor won’t work without it; see below.
+3. **Start the server with OneSync** — the editor won’t work without it.
 
 The key to open the editor is configured by the player in the GTA control settings (FiveM section):
 the script registers the command via `RegisterKeyMapping`; the default is `F7`.
