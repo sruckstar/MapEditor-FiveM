@@ -24,11 +24,14 @@ namespace MapEditor.Platform
     /// <c>new DateTime(...)</c> — it is only "what time is it" that is gone. Legacy is unaffected, but
     /// this file is what both clients use, so nothing here is conditional.
     ///
-    /// Two replacements, because the editor asks two different questions:
+    /// Three replacements, because the editor asks three different questions:
     ///
     /// * <see cref="Milliseconds"/> — "how long since X", for autosave intervals, scan throttles and
     ///   timeouts. The game's own timer, which is what the rest of the editor already measures frames
     ///   with, and it is monotonic: no clock changes, no time zones, nothing to parse.
+    /// * <see cref="SharedSeconds"/> — "what time is it <i>for everybody</i>", for the one thing that has
+    ///   to look identical on two machines with nothing sent between them. A different native and a
+    ///   different kind of answer; see its own remarks for why the obvious one is wrong.
     /// * <see cref="UtcNow"/> — "what is today's date", needed only for the timestamp shown beside a
     ///   saved map. That one really does want a wall clock, and the game has natives for it.
     ///
@@ -64,6 +67,41 @@ namespace MapEditor.Platform
         public static bool Elapsed(int stamp, int milliseconds)
         {
             return Since(stamp) >= milliseconds;
+        }
+
+        /// <summary>
+        /// The clock every client of a server reads the same, in seconds. Anything that has to <i>look</i>
+        /// the same on two machines without a byte being sent has to be a function of this and of nothing
+        /// else.
+        ///
+        /// Not <see cref="Milliseconds"/>, which is where this started and what is worth saying plainly:
+        /// GET_GAME_TIMER counts from the moment each player launched their own game, so it is a different
+        /// number on every machine in the session. Two people in front of the same blinking laser each saw
+        /// it blink to their own beat. GET_NETWORK_TIME is the session's clock, held in step by the server,
+        /// and it is what makes a published or co-edited laser possible without sending anything.
+        ///
+        /// Two things about the number itself, both of which decide how it has to be read:
+        ///
+        /// * It is an unsigned 32-bit count of milliseconds arriving through an <c>int</c>, so half its
+        ///   range comes back negative. It is read back as unsigned here and the same way in the exported
+        ///   map's Lua, so that the two implementations of the laser cannot disagree about what time it is.
+        /// * <b>Seconds of it do not fit in a float.</b> The count runs to about 4.3 billion milliseconds,
+        ///   and at 4.3 million seconds a float's own step is a quarter of a second — a blink that stutters
+        ///   and a wave that moves in jerks. Hence double, and hence double all the way down to the sine.
+        ///
+        /// Before the session's clock has started there is nothing shared to read and the game's timer
+        /// stands in: a laser blinking to itself beats a laser stuck on.
+        /// </summary>
+        public static double SharedSeconds
+        {
+            get
+            {
+                var ms = API.HasNetworkTimeStarted()
+                    ? unchecked((uint) API.GetNetworkTime())
+                    : unchecked((uint) Game.GameTime);
+
+                return ms / 1000.0;
+            }
         }
 
         /// <summary>

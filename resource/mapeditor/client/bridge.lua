@@ -42,9 +42,17 @@ local function probe(x1, y1, z1, x2, y2, z2, flags, ignoreEntity)
 
     local status, hit, endCoords, _, entityHit = GetShapeTestResult(handle)
 
+    -- `hit` is a BOOL written through a pointer, and Lua does not receive those as booleans: the
+    -- generated natives push every BOOL out-parameter through PointerValueInt — the file says so
+    -- itself, `_i --[[ actually bool ]]` — so what arrives is the number 0 or the number 1. In Lua
+    -- 0 is true, so `hit and 1 or 0` answers "hit" to a ray that met nothing at all. It has to be
+    -- compared rather than tested, and both shapes are allowed for in case a client ever pushes the
+    -- boolean instead.
+    local didHit = hit ~= nil and hit ~= false and hit ~= 0
+
     return ('%d %d %.9g %.9g %.9g %d'):format(
         status or 0,
-        hit and 1 or 0,
+        didHit and 1 or 0,
         endCoords.x, endCoords.y, endCoords.z,
         math.floor(entityHit or 0))
 end

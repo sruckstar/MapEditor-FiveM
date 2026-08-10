@@ -21,11 +21,13 @@ namespace MapEditor
 	/// edits with a menu. So the patterns are laid out from a position and a rotation, centred on the
 	/// position, and the axes come out of <see cref="Axes"/> rather than being passed in.
 	///
-	/// <b>2. Time is the game's clock, not the laser's.</b> The library measured from the moment an area was
-	/// registered, which is a different moment on every machine. Two players standing in front of the same
+	/// <b>2. Time is the session's clock, not the laser's.</b> The library measured from the moment an area
+	/// was registered, which is a different moment on every machine. Two players standing in front of the same
 	/// blinking laser have to see it blink together, and a published map has no shared "start" to measure
-	/// from — so the phase is a function of <see cref="Clock.Milliseconds"/>, which every client on a server
-	/// reads the same. This is the whole reason a laser can be published and co-edited at all.
+	/// from — so the phase is a function of <see cref="Clock.SharedSeconds"/>, the session clock the server
+	/// holds in step, which every client reads the same. This is the whole reason a laser can be published and
+	/// co-edited at all. It was written against the game's own timer first, which counts from each player's
+	/// own launch and only looks shared; see that property for what the difference cost.
 	///
 	/// <b>3. The narrow phase is geometry rather than a shape test.</b> The original follows its broad-phase
 	/// early-out with START_SHAPE_TEST_SWEPT_SPHERE. That native answers through a Vector3 pointer, which the
@@ -73,11 +75,78 @@ namespace MapEditor
 		private const float GlowIntensity = 6f;
 
 		/// <summary>
+		/// How wide a ped is, for the narrow phase, in metres — half the width of the capsule the game gives
+		/// a standing ped.
+		///
+		/// It has to be added by hand, and forgetting it is what makes a laser harmless. The original sweeps
+		/// a sphere of <see cref="Laser.HitRadius"/> along the beam and asks the game what it hit, so the
+		/// ped's own collision is on the game's side of the answer and the tolerance is really
+		/// <c>HitRadius + this</c>. Here the ped is one line down their middle, so a beam passing through
+		/// somebody's shoulder measures nearly half a metre away from them and the bare HitRadius of 0.35
+		/// refuses it: a grid whose beams are spaced further apart than 2 × HitRadius could be walked
+		/// straight through, which is a laser that draws and does nothing.
+		/// </summary>
+		private const float PedRadius = 0.35f;
+
+		/// <summary>
+		/// How far below a ped's own position the soles of their feet are, in metres, and how far above it the
+		/// top of their head is.
+		///
+		/// <b>A ped answers from its middle and stands on its feet.</b> The rest of this resource knows that:
+		/// <see cref="AutoloadedMaps"/> spawns a ped a metre under the position the editor stored, the
+		/// exported map's Lua calls the same metre <c>PED_GROUND_OFFSET</c>, and the co-editing pass allows
+		/// for it when it decides whether something has moved. The narrow phase here was written as though the
+		/// position were at the feet, and measured beams against a line from <c>+0.3</c> to <c>+1.6</c> —
+		/// which is the shoulders to three-quarters of a metre above the head. Nothing below the shoulders was
+		/// tested at all, so with <see cref="PedRadius"/>'s tolerance the lowest beam that could burn anybody
+		/// stood 0.6 m off the floor: a laser lying across a room drew perfectly and burned nobody, which is
+		/// indistinguishable from a laser whose damage is broken.
+		/// </summary>
+		private const float PedFootDrop = 0.95f;
+
+		/// <summary>The other end of that line; see <see cref="PedFootDrop"/>.</summary>
+		private const float PedHeadRise = 0.85f;
+
+		/// <summary>
+		/// What is allowed to stand between the emitter and the player and stop the beam: peds and objects,
+		/// the game's own laser script's flags (8 | 16), and <b>not the map</b>.
+		///
+		/// Leaving the world out looks wrong and is the only thing that works. A laser is placed by dragging
+		/// it about a room, so its beams end wherever the room does — inside the far wall, under the floor,
+		/// through the doorway it guards. The probe is fired from the end of the beam, so with
+		/// <see cref="IntersectOptions.Map"/> in the set that buried end reports a hit on the very first
+		/// metre and the laser refuses to burn anybody, for ever, while still drawing perfectly. The
+		/// original never asked about the world either: its swept sphere passed 24, and what it was buying
+		/// was "is there a crate in the way", which is what these two flags are.
+		/// </summary>
+		private const IntersectOptions BeamBlockers = (IntersectOptions) 24;
+
+		/// <summary>
 		/// Beams drawn in one frame, across every laser of every map standing. A ceiling rather than a
 		/// budget: a map with sixty overlapping lasers in one room is somebody's mistake, and the frame it
 		/// costs should be spent finding that out rather than on the floor.
 		/// </summary>
 		private const int MaxBeamsPerFrame = 400;
+
+		/// <summary>
+		/// The three steps between "a laser is on screen" and "the player is losing health", each said once
+		/// per session and never again.
+		///
+		/// A laser that burns nobody looks exactly like a laser that is not being walked into, and the three
+		/// places it can stop — the beams miss the body, the probe says something is in the way, the damage
+		/// lands — are fixed in three different files. One line each turns a live run into an answer instead
+		/// of another guess, and one line each is what they cost: these are set on the first frame of the
+		/// first contact of the session.
+		/// </summary>
+		private static bool _saidContact, _saidMissed, _saidBlocked, _saidBurn;
+
+		/// <summary>Says something once and puts <paramref name="said"/> up so it is never said again.</summary>
+		private static void Say(ref bool said, string message, params object[] args)
+		{
+			if (said) return;
+			said = true;
+			Log.Info(message, args);
+		}
 
 		private static bool _glowsOk = true;
 		private static bool _texturedOk = true;
@@ -100,6 +169,13 @@ namespace MapEditor
 
 		/// <summary>How long the last frame took, in seconds. Taken once, by <see cref="BeginFrame"/>.</summary>
 		private static float _frameSeconds;
+
+		/// <summary>
+		/// This frame's reading of the shared clock, in seconds. Taken once, by <see cref="BeginFrame"/>, so
+		/// that every laser drawn in one frame is drawn from one instant — and so that reading it costs two
+		/// native calls a frame rather than two per laser.
+		/// </summary>
+		private static double _time;
 
 		private static int _lastFrameStamp;
 
@@ -210,7 +286,7 @@ namespace MapEditor
 		/// library anchored them at a corner, which is right when a script places them by hand and wrong when
 		/// somebody is dragging one around with a mouse.
 		/// </summary>
-		public static void BuildBeams(Laser laser, float time, List<Beam> into)
+		public static void BuildBeams(Laser laser, double time, List<Beam> into)
 		{
 			into.Clear();
 			if (laser == null) return;
@@ -274,7 +350,10 @@ namespace MapEditor
 					for (var i = 0; i < count; i++)
 					{
 						var along = step * i;
-						var swing = laser.Amplitude * (float) Math.Sin((along + phase) * laser.Frequency);
+
+						// The sine's argument stays in double all the way in: the shared clock's seconds run
+						// to millions, and a float would quantise the wave into quarter-second steps.
+						var swing = (float) (laser.Amplitude * Math.Sin((along + phase) * laser.Frequency));
 						var centre = first + right * along + up * swing;
 						into.Add(NewBeam(centre - half, centre + half, i));
 					}
@@ -291,8 +370,12 @@ namespace MapEditor
 		/// worth having: a gap travelling across a grating is something a player can time their way through,
 		/// while a whole grating winking on and off is the blink they already have.
 		/// </summary>
-		public static bool IsLit(Laser laser, int index, float time)
+		public static bool IsLit(Laser laser, int index, double time)
 		{
+			// Both rhythms are a floored modulo rather than the % operator, and both stay in double: floored,
+			// so the phase is right even where the shared clock's own count has gone round and arrived
+			// negative, and double, because seconds of that clock are far past what a float can still tell
+			// apart at a tenth of a second.
 			switch (laser.Rhythm)
 			{
 				case LaserRhythm.Blink:
@@ -300,7 +383,7 @@ namespace MapEditor
 					var on = Math.Max(0f, laser.OnSeconds);
 					var period = on + Math.Max(0f, laser.OffSeconds);
 					if (period <= 0.0001f) return true;
-					return time - (float) Math.Floor(time / period) * period < on;
+					return time - Math.Floor(time / period) * period < on;
 				}
 
 				case LaserRhythm.Chase:
@@ -309,8 +392,8 @@ namespace MapEditor
 					var count = Math.Max(1, ResolvedBeamCount(laser));
 					var fraction = Clamp01(laser.ChaseOnFraction);
 
-					var raw = time / period + (float) index / count;
-					var phase = raw - (float) Math.Floor(raw);
+					var raw = time / period + (double) index / count;
+					var phase = raw - Math.Floor(raw);
 					return phase < fraction;
 				}
 
@@ -336,12 +419,20 @@ namespace MapEditor
 
 			// Once a frame rather than once per burning laser: read per laser, the second laser to burn
 			// somebody in the same frame would measure zero elapsed time and never deal a whole point.
+			//
+			// The game's timer and not the shared clock, and the two are not interchangeable: this one only
+			// ever has to be right about how long a frame took, and it is monotonic, while the session clock
+			// is steered by the server and may be corrected in either direction. A correction is a jump, and
+			// a jump measured as frame time is a second of laser damage in one frame.
 			var now = Clock.Milliseconds;
 			var elapsed = _lastFrameStamp == 0 ? 0 : Clock.Since(_lastFrameStamp);
 			_lastFrameStamp = now;
 
 			// Clamped, because a loading hitch must not deliver two seconds of laser in one frame.
 			_frameSeconds = elapsed <= 0 ? 0f : (elapsed > 250 ? 0.25f : elapsed / 1000f);
+
+			// The other clock: what the beams are drawn from, rather than what the damage is measured with.
+			_time = Clock.SharedSeconds;
 		}
 
 		/// <summary>Called once at the bottom of a frame. Restores normal blending. See <see cref="BeginFrame"/>.</summary>
@@ -353,16 +444,18 @@ namespace MapEditor
 		}
 
 		/// <summary>
-		/// The clock every laser's rhythm and wave is a function of, in seconds.
+		/// The clock every laser's rhythm and wave is a function of, in seconds: this frame's reading of
+		/// <see cref="Clock.SharedSeconds"/>, taken by <see cref="BeginFrame"/>.
 		///
-		/// The game's own timer rather than a moment this laser was created at, and that is the point: it is
+		/// The session's clock rather than a moment this laser was created at, and that is the point: it is
 		/// the same number on every client of a server to within a frame, so a blinking laser blinks together
-		/// for everybody looking at it and a published map needs nothing sent to keep it that way. See the
-		/// class remarks.
+		/// for everybody looking at it and a published map needs nothing sent to keep it that way. Double
+		/// rather than float, because seconds of that clock do not fit in a float — see the property itself.
+		/// See also the class remarks.
 		/// </summary>
-		public static float Time
+		public static double Time
 		{
-			get { return Clock.Milliseconds / 1000f; }
+			get { return _time; }
 		}
 
 		/// <summary>
@@ -397,15 +490,23 @@ namespace MapEditor
 
 			if (laser.Textured && _texturedOk) RequestBeamAssets();
 
-			// Chest height, as func_33 tests from: the ped's own position sits at their feet, and a beam at
-			// ankle height would otherwise be the only one that could ever be found near them.
-			var low = alive ? player.Position + new Vector3(0f, 0f, 0.3f) : Vector3.Zero;
-			var high = alive ? player.Position + new Vector3(0f, 0f, 1.6f) : Vector3.Zero;
+			// The line down the middle of the ped, from the soles of their feet to the top of their head. The
+			// position the game answers with is the middle of the body rather than the feet — see PedFootDrop,
+			// which is the whole of why a laser lying across a room used to burn nobody.
+			var low = alive ? player.Position - new Vector3(0f, 0f, PedFootDrop) : Vector3.Zero;
+			var high = alive ? player.Position + new Vector3(0f, 0f, PedHeadRise) : Vector3.Zero;
+
+			// The beam's own tolerance plus the body it is measured against; see PedRadius.
+			var reach = Math.Max(0.01f, laser.HitRadius) + PedRadius;
 
 			var burning = 0;
 			var haveHit = false;
 			var hitPoint = Vector3.Zero;
 			var hitFrom = Vector3.Zero;
+
+			// Kept for the one-shot lines below and for nothing else: the closest any beam came to the body
+			// this frame is the whole answer to "I am standing in it and nothing is happening".
+			var nearest = float.MaxValue;
 
 			for (var i = 0; i < Scratch.Count; i++)
 			{
@@ -421,10 +522,11 @@ namespace MapEditor
 
 				Vector3 onBeam;
 				var gap = SegmentDistance(beam.Start, beam.End, low, high, out onBeam);
+				if (gap < nearest) nearest = gap;
 
 				// The two phases of func_33 collapse into one comparison here: its cheap early-out existed to
 				// keep a swept-sphere shape test off, and there is no shape test left to keep off.
-				if (gap > Math.Max(0.01f, laser.HitRadius)) continue;
+				if (gap > reach) continue;
 
 				burning++;
 				if (!haveHit)
@@ -437,16 +539,37 @@ namespace MapEditor
 
 			if (!haveHit || !alive || !mayBurn)
 			{
+				// Standing among the beams and missed by all of them: the one case where silence would be
+				// indistinguishable from a laser nobody has walked into. Measured against the nearest beam
+				// rather than against the laser's own middle, which for a wide array is a room away from the
+				// person standing in it — and the body's own span is said too, because the last two of these
+				// hunts both ended at a line that was not where the body is.
+				if (alive && mayBurn && nearest < 5f)
+					Say(ref _saidMissed, "LaserRenderer: in the laser, but the nearest beam passes {0:0.00} m " +
+					                     "from the body and {1:0.00} m is what counts as a hit. The body is the " +
+					                     "line z {2:0.00} to {3:0.00}.", nearest, reach, low.Z, high.Z);
+
 				laser.DamageDebt = 0f;
 				laser.WasBurning = false;
 				return;
 			}
 
+			Say(ref _saidContact, "LaserRenderer: {0} beam(s) on the player, nearest {1:0.00} m of {2:0.00} m.",
+				burning, nearest, reach);
+
 			// One probe for the whole laser rather than one per beam: what the shape test in the original
 			// bought is "is the player actually in the light", and a crate that hides them from the nearest
 			// beam hides them from its neighbours too.
-			if (Blocked(hitFrom, hitPoint, player))
+			int obstacle;
+			if (Blocked(hitFrom, hitPoint, player, out obstacle))
 			{
+				// What was hit, and not only that something was: the flags let peds and objects stop a
+				// beam, so "somebody is standing in front of you" and "the emitter is buried in a prop"
+				// both arrive here and are fixed at opposite ends of the map.
+				Say(ref _saidBlocked, "LaserRenderer: the beam reaches the player but the probe says " +
+				                      "something is in the way, so nothing is burned. It answered with " +
+				                      "entity {0}.", obstacle);
+
 				laser.DamageDebt = 0f;
 				laser.WasBurning = false;
 				return;
@@ -460,16 +583,13 @@ namespace MapEditor
 		///
 		/// The player is what the ray is told to ignore, so a hit means an obstacle and nothing else. This is
 		/// the one native call a laser makes per frame, and it is made only once the geometry has already
-		/// said somebody is standing in the beam.
+		/// said somebody is standing in the beam. <paramref name="obstacle"/> is what it met, for the line
+		/// that says so.
 		/// </summary>
-		private static bool Blocked(Vector3 from, Vector3 to, Ped player)
+		private static bool Blocked(Vector3 from, Vector3 to, Ped player, out int obstacle)
 		{
-			// The world, the props in it and whatever any script has spawned. Peds are deliberately left out:
-			// the only one that could be in the way is the player, and the player is what the ray ignores.
-			const IntersectOptions solid =
-				IntersectOptions.Map | IntersectOptions.MissionEntities | IntersectOptions.Objects;
-
-			var probe = LuaBridge.Probe(from, to, solid, player);
+			var probe = LuaBridge.Probe(from, to, BeamBlockers, player);
+			obstacle = probe.EntityHandle;
 
 			// No answer is not an obstacle: the bridge being unavailable must not quietly switch every laser
 			// in the map off. See LuaBridge.ProbeResult.Answered.
@@ -513,9 +633,23 @@ namespace MapEditor
 			if (whole > 0)
 			{
 				laser.DamageDebt -= whole;
-				Function.Call(Hash.APPLY_DAMAGE_TO_PED, player.Handle, whole, true, 0);
+
+				// Health either side of the call, and read only while the line below still has to be said:
+				// "the native ran" and "the player lost health" are different claims, and with every earlier
+				// gate now reporting itself this is the last place the damage could still go quiet. See
+				// Platform.Log for why a native that failed would say nothing on its own.
+				var before = _saidBurn ? 0 : player.Health;
+
+				// Five arguments, as the library and the game's own scripts pass: this native grew two
+				// trailing parameters, and a native called with fewer arguments than it reads does not fail —
+				// it reads whatever the argument buffer happened to hold.
+				Function.Call(Hash.APPLY_DAMAGE_TO_PED, player.Handle, whole, true, 0, 0);
 
 				if (player.IsDead) Function.Call(Hash.START_ENTITY_FIRE, player.Handle);
+
+				if (!_saidBurn)
+					Say(ref _saidBurn, "LaserRenderer: burning the player, {0} point(s) this frame; " +
+					                   "health {1} -> {2}.", whole, before, player.Health);
 			}
 
 			laser.WasBurning = true;

@@ -40,6 +40,26 @@ local PED_GROUND_OFFSET = 1.0
 -- finding that out.
 local LASER_MAX_BEAMS = 400
 
+--- How wide a ped is, added to a laser's own hit radius. The beams are measured against one line down the
+--- middle of the player rather than against their body, so without this a beam through somebody's shoulder
+--- measures half a metre away from them and burns nobody. Client/LaserRenderer.cs carries the same number.
+local LASER_PED_RADIUS = 0.35
+
+--- Where a ped's own position sits in the body: this far below it are the soles of their feet, and this far
+--- above it is the top of their head. It is PED_GROUND_OFFSET again, from the other end — a ped answers from
+--- its middle and stands on its feet — and the laser used to be written as though the position were the feet,
+--- measuring beams against a line from +0.3 to +1.6. That is the shoulders to well above the head: nothing
+--- below the shoulders was tested, so a beam lying across a room passed a metre under everything that could
+--- be hit and burned nobody while drawing perfectly. Client/LaserRenderer.cs carries the same two numbers.
+local LASER_PED_FOOT = 0.95
+local LASER_PED_HEAD = 0.85
+
+--- What may stand between the emitter and the player and stop a beam: peds and objects, the flags the
+--- game's own laser script uses, and deliberately not the map. A laser's beams end wherever the room does —
+--- inside the far wall, under the floor — and the probe starts at that end, so asking about the world would
+--- have every laser report itself blocked on its first metre while drawing perfectly.
+local LASER_BLOCKERS = 24
+
 -- The multiplayer dictionary the game's own laser beams are textured from.
 local BEAM_DICT = 'mpinvperscommon'
 local BEAM_CORE = 'beam_middle'
@@ -274,8 +294,10 @@ end
     is no Map Editor to ask. Change one of the two and the other has to follow, or a map will look different
     exported from how it looked in the editor it was built in.
 
-    The clock is the game's, not the resource's: every client of a server reads GetGameTimer within a frame
-    of every other, so a blinking laser blinks together for everybody without a single byte being sent.
+    The clock is the session's, not the resource's and not the game's: GetNetworkTime is held in step by the
+    server, so every client reads it the same and a blinking laser blinks together for everybody without a
+    single byte being sent. GetGameTimer, which this was written against first, counts from the moment each
+    player launched their own game and is a different number on every machine — it only looked shared.
 ]]
 
 local function laserDensity(name)
@@ -516,11 +538,16 @@ end
 
 --- Whether something solid stands between the emitter and the point the beam met the player. One probe for
 --- the whole laser: a crate that hides them from the nearest beam hides them from its neighbours too.
+---
+--- `hit` is compared rather than tested because it is a BOOL written through a pointer, and Lua receives
+--- those as the number 0 or 1 rather than as a boolean — the generated natives push every BOOL
+--- out-parameter through PointerValueInt. In Lua 0 is true, so returning it bare made every laser report
+--- itself permanently blocked and burn nobody, while drawing perfectly.
 local function laserBlocked(from, to, ped)
     local handle = StartExpensiveSynchronousShapeTestLosProbe(
-        from.x, from.y, from.z, to.x, to.y, to.z, 1 + 16 + 32, ped, 7)
+        from.x, from.y, from.z, to.x, to.y, to.z, LASER_BLOCKERS, ped, 7)
     local status, hit = GetShapeTestResult(handle)
-    return status == 2 and hit
+    return status == 2 and hit ~= nil and hit ~= false and hit ~= 0
 end
 
 local laserLastStamp = 0
@@ -528,12 +555,21 @@ local laserLastStamp = 0
 local function drawLasers()
     if #lasers == 0 then return end
 
+    -- Two clocks, and they are not interchangeable. How long the frame took is measured with the game's own
+    -- timer, which is monotonic; the session clock is steered by the server and a correction to it, measured
+    -- as frame time, would be a second of laser damage in one frame.
     local now = GetGameTimer()
     local elapsed = laserLastStamp == 0 and 0 or (now - laserLastStamp)
     laserLastStamp = now
     local frameSeconds = elapsed <= 0 and 0.0 or math.min(0.25, elapsed / 1000.0)
 
-    local time = now / 1000.0
+    -- What the beams themselves are drawn from. Read back as unsigned, because the network clock is a 32-bit
+    -- millisecond count arriving through a signed int and half of its range comes back negative; the editor's
+    -- own Clock.SharedSeconds does exactly the same, so the two cannot disagree about what time it is.
+    -- Before the session clock has started there is nothing shared to read and the game's timer stands in.
+    local shared = HasNetworkTimeStarted() and GetNetworkTime() or GetGameTimer()
+    if shared < 0 then shared = shared + 4294967296 end
+    local time = shared / 1000.0
     local ped = PlayerPedId()
     local alive = ped ~= 0 and not IsEntityDead(ped)
     local here = GetEntityCoords(ped, true)
@@ -554,10 +590,13 @@ local function drawLasers()
         if drawn < LASER_MAX_BEAMS and
             (l.activationRange <= 0.0 or #(here - l.position) <= l.activationRange) then
 
-            local low, high = here + vector3(0.0, 0.0, 0.3), here + vector3(0.0, 0.0, 1.6)
+            -- The line down the middle of the ped, feet to head. See LASER_PED_FOOT: the coordinates a ped
+            -- answers with are the middle of the body, not the feet.
+            local low = here - vector3(0.0, 0.0, LASER_PED_FOOT)
+            local high = here + vector3(0.0, 0.0, LASER_PED_HEAD)
             local beams = laserBeams(l, time)
             local burning, hitPoint, hitFrom = 0, nil, nil
-            local radius = math.max(0.01, l.hitRadius)
+            local radius = math.max(0.01, l.hitRadius) + LASER_PED_RADIUS
 
             for b = 1, #beams do
                 if drawn >= LASER_MAX_BEAMS then break end
@@ -595,7 +634,10 @@ local function drawLasers()
                     local whole = math.floor(l.debt)
                     if whole > 0 then
                         l.debt = l.debt - whole
-                        ApplyDamageToPed(ped, whole, true, 0)
+                        -- Five arguments, as the game's own scripts pass: the native grew two trailing
+                        -- parameters, and one called with fewer does not fail — it reads whatever the
+                        -- argument buffer held.
+                        ApplyDamageToPed(ped, whole, true, 0, 0)
                         if IsEntityDead(ped) then StartEntityFire(ped) end
                     end
                 else
