@@ -5,9 +5,6 @@ See also: [MapEditor for SP](https://github.com/sruckstar/MapEditor)
 The classic Map Editor, familiar to many GTA 5 single-player modders, now offers full support for FiveM. Use the free camera to create maps for your server right in the game.
 
 
-**Original Author:** Guad
-**New features, bug fixes, FiveM version:** andre500
-
 _This mod uses the LemonUI code by Hannele “justalemon” Ruiz, licensed under the MIT License. The LemonUI plugin does not work with the Enhanced version of FiveM, so it has been partially adapted for this mod. No dependency on LemonUI is required._
 
 
