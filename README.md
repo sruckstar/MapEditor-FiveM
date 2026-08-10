@@ -25,12 +25,15 @@ _This mod uses the LemonUI code by Hannele “justalemon” Ruiz, licensed under
 - OneSync Support for peds, vehicles, and dynamic objects
 - **NEW:** The ability to create lasers from loot found at the Kortz Center. Customize the size, color, pattern type, damage, and many other settings. The laser's movement is synchronized using server time
 
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/8c7e1c69-33e1-404e-bcae-700fa2a70732" />
+
 
 ## Build with others
 
-Collaborate with other players to create maps in the new Map Editor mode. Start a private session right within your server, invite other players, and begin creating together. Every player in the session can see what others are building—players outside the session can’t see anything.
+Collaborate with other players to create maps in the new Map Editor mode. Start a private session right within your server, invite other players, and begin creating together. Every player in the session can see what others are building—players outside the session can’t see anything. OneSync is not used in collaborative mode: all synchronization is handled on the client side, so there are no limits on the number of players or objects.
 
-OneSync is not used in collaborative mode: all synchronization is handled on the client side, so there are no limits on the number of players or objects.
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/a3084cb8-29ef-4807-b3bc-f70aae0f9640" />
+
 
 
 ## Free. Open source
