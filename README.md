@@ -1,4 +1,5 @@
 <img width="1536" height="1024" alt="map-fivem" src="https://github.com/user-attachments/assets/14b52cc8-0596-4506-956d-431f6849d392" />
+See also: [MapEditor for SP](https://github.com/sruckstar/MapEditor)
 
 The classic Map Editor, familiar to many GTA 5 single-player modders, now offers full support for FiveM. Use the free camera to create maps for your server right in the game.
 
