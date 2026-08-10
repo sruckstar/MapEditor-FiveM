@@ -23,7 +23,7 @@ _This mod uses the LemonUI code by Hannele “justalemon” Ruiz, licensed under
 - Instantly add and remove maps without having to restart server resources
 - Fine-tune permissions: You decide who can open the menu, save maps, and upload them to the server
 - OneSync Support for peds, vehicles, and dynamic objects
-- **NEW:** The ability to create lasers from loot found at the Kortz Center. Customize the size, color, pattern type, damage, and many other settings. The laser's movement is synchronized using server time
+- **NEW:** The ability to create lasers from the Kortz Center update. Customize the size, color, pattern type, damage, and many other settings. The laser's movement is synchronized using server time
 
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/8c7e1c69-33e1-404e-bcae-700fa2a70732" />
 
